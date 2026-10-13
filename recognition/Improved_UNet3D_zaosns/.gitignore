@@ -1,0 +1,39 @@
+# Python and local environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.DS_Store
+.env
+.env.*
+
+# Keep datasets and patient-level metadata outside the repository.
+data/
+datasets/
+private/
+splits/
+*.nii
+*.nii.gz
+*.dcm
+*.npy
+*.npz
+
+# Model files and uncurated experiment output must not be committed.
+checkpoints/
+weights/
+outputs/
+runs/
+logs/
+wandb/
+*.pt
+*.pth
+*.ckpt
+*.h5
+*.hdf5
+*.keras
+*.safetensors
+*.onnx
+events.out.tfevents.*
+
+# Reviewed report figures can be placed in figures/; it is not ignored.
