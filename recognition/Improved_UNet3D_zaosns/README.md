@@ -1,10 +1,10 @@
 # HipMRI Segmentation with a 3D Improved U-Net
 
-**Status: encoder and decoder components.** `modules.py` contains the residual
-block, a configurable encoder, a decoder with skip connections and synthetic
-checks. Segmentation heads, deep supervision, the data loader, training and
-evaluation are not implemented. No HipMRI experimental results or completed
-feasibility check-off are claimed.
+**Status: segmentation prototype with summed-output deep supervision.**
+`modules.py` connects the residual encoder, skip-connected decoder and multi-scale
+segmentation heads, with checks using synthetic inputs and labels. The data
+loader, training and evaluation are not implemented. No HipMRI experimental
+results or completed feasibility check-off are claimed.
 
 ## Proposed problem and approach
 
@@ -54,7 +54,7 @@ These are planned experiments, not completed work or assumed improvements.
 
 | File | Responsibility | Current state |
 | --- | --- | --- |
-| `modules.py` | PyTorch model components | Residual block, encoder and decoder |
+| `modules.py` | PyTorch model components | Residual encoder, decoder, segmentation heads and summed-output deep supervision |
 | `dataset.py` | Loading, preprocessing, patient splits and augmentation | Not implemented |
 | `train.py` | Training, validation, testing, checkpointing and learning curves | Not implemented |
 | `predict.py` | Loading saved weights and visualizing test inference | Not implemented |
@@ -91,12 +91,47 @@ channels, batches and adjacent spatial sizes. It returns decoded features from
 highest to lowest resolution, excluding the consumed bottleneck. Output level
 `i` matches encoder level `i` in spatial size and channels. At least two encoder
 levels are required; a single-level encoder has no decoding stage. For four
-encoder levels, three decoder features are returned for future segmentation heads.
+encoder levels, three decoder features are returned for the segmentation heads.
 
 The default widths `(16, 32, 64, 128)` and dropout probability `0.3` are configurable
-starting points, not settings selected through HipMRI experiments. Segmentation
-heads and deep supervision are pending; current outputs are features, not class
-scores or masks.
+starting points, not settings selected through HipMRI experiments.
+
+`SegmentationHead3D` uses a 1x1x1 convolution to convert features into raw class
+scores (logits). `DeepSupervisionHead3D` applies one such head to each decoder
+level and combines their scores from coarse to fine. At each step, it resizes
+the accumulated scores to the next finer feature's exact spatial dimensions
+using nearest-neighbor interpolation, then adds that level's scores. Resizing
+is performed between adjacent levels; for odd dimensions this can differ from
+resizing every coarse output directly to the highest resolution.
+
+This follows the elementwise-summed segmentation layers described in
+[Isensee et al., section 2.1](https://arxiv.org/pdf/1802.10508). A loss on the
+combined output supplies gradients to every head. This version does not add
+separate losses at individual scales. Using every decoder level and exact-size
+resizing is this project's adaptation, not a claim of an exact paper reproduction.
+
+`SegmentationModel3D` joins the encoder, decoder and output heads. With the default
+`deep_supervision=True`, the four encoder levels provide three decoder features
+and three segmentation heads. Set `deep_supervision=False` to instantiate only
+the highest-resolution head for a future controlled comparison. With only two
+encoder levels, there is one decoder feature and either setting reduces to one
+head. Both settings return one logits tensor `[N, num_classes, D, H, W]` at the
+input's spatial resolution in training and evaluation modes. The encoder and
+decoder still return features when used separately. State restoration requires
+matching model settings, including the deep-supervision flag.
+
+`num_classes` is required and includes background. This interface assumes
+mutually exclusive labels and at least two classes; a binary task uses two scores
+per voxel (background and foreground). The actual HipMRI label mapping and class
+count will be decided after inspecting the data. The checks use two and four
+classes only as synthetic examples.
+
+The model returns logits without softmax or argmax, as expected by PyTorch's
+[cross-entropy loss](https://docs.pytorch.org/docs/2.14/generated/torch.nn.CrossEntropyLoss.html).
+For class-index targets, labels have shape `[N, D, H, W]`, dtype `torch.long` and
+values from `0` through `num_classes - 1`. An eventual inference caller can use
+`logits.argmax(dim=1)` to obtain class indices. Cross entropy is used here to
+check gradient flow, not as a finalized choice of training objective.
 
 From this project directory, with PyTorch available, run:
 
@@ -127,6 +162,18 @@ The synthetic CPU checks cover:
 - Default encoder dropout (`0.3`): training outputs repeat with the same seed
   and change with a different seed, gradients remain finite, and evaluation
   outputs remain identical when the seed changes.
+- The segmentation head: known negative and greater-than-one scores are returned
+  unchanged, including for a single voxel; invalid class counts and input shapes
+  are rejected.
+- The connected model with deep supervision enabled and disabled: even and odd
+  spatial sizes, one and two input channels, two and four output classes, finite
+  cross-entropy gradients through the encoder, decoder and every instantiated
+  head, unchanged inputs, and state restoration.
+  Forward checks also cover the default four-level model and a thin two-level
+  volume.
+- Deep supervision: a hand-computed three-scale sum with odd sizes, independent
+  gradients into every scale and every head, invalid feature inputs, and exact
+  equivalence to the single head when only one decoder level exists.
 
 The gradient-connectivity checks disable dropout to avoid randomly dropping every
 feature channel in a tiny block. The separate dropout check uses the default
@@ -136,7 +183,7 @@ measure Dice/IoU.
 
 ## Environment and reproducibility
 
-The encoder/decoder component checks passed locally on macOS CPU with Python
+The component and segmentation model checks passed locally on macOS CPU with Python
 3.13.9 and PyTorch 2.14.0 on 14 October 2026, using seed 3710. Additional checks
 covered the default four-level encoder/decoder, invalid channel configurations,
 incorrect feature counts, ranks, channels, batches and spatial ordering. A
@@ -171,13 +218,15 @@ in the final report. This preparation commit is not a finished submission.
 
 Codex assisted with interpreting the assignment, comparing project options,
 checking and configuring the GitHub fork, drafting this plan and the ignore rules,
-and implementing the residual block, encoder, decoder and synthetic checks. The
-checks exercise feature shapes, gradients through the encoder and decoder,
-independent skip contributions, state restoration, input-size limits, default
-dropout behavior and residual-path behavior; they do not validate segmentation quality. No training
-or empirical validation on HipMRI has been performed. The student still needs
-to review and understand the implementation. This section will be updated with
-the assistance received and the checks actually performed during development.
+and implementing the residual block, encoder, decoder, segmentation heads,
+summed-output deep supervision and synthetic checks. The checks exercise
+feature/logit shapes, gradients through the model, independent skip and scale
+contributions, coarse-to-fine output summation, state restoration, input-size
+limits, default dropout behavior and residual-path behavior; they do not validate
+segmentation quality. No training or empirical validation on HipMRI has been
+performed. The student still needs to review and understand the implementation.
+This section will be updated with the assistance received and the checks actually
+performed during development.
 
 ## References
 
@@ -186,6 +235,7 @@ the assistance received and the checks actually performed during development.
   any revised requirements against the course announcements.
 - Isensee et al., [Brain Tumor Segmentation and Radiomics Survival Prediction:
   Contribution to the BRATS 2017 Challenge](https://arxiv.org/abs/1802.10508).
-  Proposed architecture reference.
+  Architecture reference, especially section 2.1; the project includes the
+  implementation adaptations described above.
 - Cicek et al., [3D U-Net: Learning Dense Volumetric Segmentation from Sparse
   Annotation](https://arxiv.org/abs/1606.06650). Proposed comparison reference.
