@@ -1,9 +1,10 @@
 # HipMRI Segmentation with a 3D Improved U-Net
 
-**Status: residual block and encoder.** `modules.py` contains a 3D residual block,
-a configurable encoder and checks using synthetic tensors. The decoder,
-segmentation heads, data loader, training and evaluation are not implemented.
-No HipMRI experimental results or completed feasibility check-off are claimed.
+**Status: encoder and decoder components.** `modules.py` contains the residual
+block, a configurable encoder, a decoder with skip connections and synthetic
+checks. Segmentation heads, deep supervision, the data loader, training and
+evaluation are not implemented. No HipMRI experimental results or completed
+feasibility check-off are claimed.
 
 ## Proposed problem and approach
 
@@ -53,7 +54,7 @@ These are planned experiments, not completed work or assumed improvements.
 
 | File | Responsibility | Current state |
 | --- | --- | --- |
-| `modules.py` | PyTorch model components | Residual block and encoder |
+| `modules.py` | PyTorch model components | Residual block, encoder and decoder |
 | `dataset.py` | Loading, preprocessing, patient splits and augmentation | Not implemented |
 | `train.py` | Training, validation, testing, checkpointing and learning curves | Not implemented |
 | `predict.py` | Loading saved weights and visualizing test inference | Not implemented |
@@ -72,16 +73,30 @@ paper reproduction.
 
 `Encoder3D` applies a full-resolution stem and residual block, then uses stride-two
 3D convolutions and residual blocks to form a feature pyramid. It returns a tuple
-from highest resolution to bottleneck, retaining earlier features for future
-decoder skip connections. Each downsampled axis has size `ceil(n / 2)`; input
+from highest resolution to bottleneck, retaining earlier features for decoder
+skip connections. Each downsampled axis has size `ceil(n / 2)`; input
 dimensions need not be divisible by powers of two. A bottleneck containing only
 one spatial voxel is rejected before computation because instance normalization
 cannot use it. Thin volumes with more than one voxel at the bottleneck are allowed.
 
+`DecoderBlock3D` resizes a lower-resolution tensor to its skip's exact spatial
+shape using nearest-neighbor interpolation. A 3x3x3 convolution adjusts its
+channels, then the result is concatenated with the skip. A 3x3x3 convolution and
+a 1x1x1 convolution fuse the features and reduce the concatenated channel count,
+with instance normalization and LeakyReLU. This follows the localization-pathway
+idea in the reference paper, extending the resizing to support odd input sizes.
+
+`Decoder3D` consumes the entire encoder feature tuple and checks its level count,
+channels, batches and adjacent spatial sizes. It returns decoded features from
+highest to lowest resolution, excluding the consumed bottleneck. Output level
+`i` matches encoder level `i` in spatial size and channels. At least two encoder
+levels are required; a single-level encoder has no decoding stage. For four
+encoder levels, three decoder features are returned for future segmentation heads.
+
 The default widths `(16, 32, 64, 128)` and dropout probability `0.3` are configurable
-starting points, not settings selected through HipMRI experiments. The decoder,
-segmentation heads and deep supervision are pending; encoder outputs are features,
-not class scores or masks.
+starting points, not settings selected through HipMRI experiments. Segmentation
+heads and deep supervision are pending; current outputs are features, not class
+scores or masks.
 
 From this project directory, with PyTorch available, run:
 
@@ -99,18 +114,35 @@ The synthetic CPU checks cover:
   every encoder stage and the input.
 - Thin volumes, a single encoder level, and rejection of a single-voxel
   bottleneck in both training and evaluation modes.
+- The connected encoder and decoder: matching input resolution for even and odd
+  inputs, non-doubling channel widths, finite gradients and state restoration.
+  Encoder features are also detached into independent gradient-tracking tensors
+  to check that every skip and the bottleneck affect the highest-resolution output.
+- Thin-volume decoding, the minimum two-level configuration, and rejection of
+  a decoder configuration with only one encoder level.
+- The default four-level encoder/decoder and rejection of malformed feature
+  counts, ranks, channels, batches, spatial sizes, single-voxel features and
+  reversed feature ordering. The ordering check uses equal channel counts so
+  it must detect the spatial error instead of only a channel mismatch.
+- Default encoder dropout (`0.3`): training outputs repeat with the same seed
+  and change with a different seed, gradients remain finite, and evaluation
+  outputs remain identical when the seed changes.
 
-Dropout is disabled for these tiny checks to avoid randomly dropping every feature
-channel. The checks do not load MRI data, train a segmentation model or measure
-Dice/IoU.
+The gradient-connectivity checks disable dropout to avoid randomly dropping every
+feature channel in a tiny block. The separate dropout check uses the default
+probability with wider features and seeds 17 and 18. All of these checks run with
+the command above. They do not load MRI data, train a segmentation model or
+measure Dice/IoU.
 
 ## Environment and reproducibility
 
-The residual-block and encoder checks passed locally on macOS CPU with Python
+The encoder/decoder component checks passed locally on macOS CPU with Python
 3.13.9 and PyTorch 2.14.0 on 14 October 2026, using seed 3710. Additional checks
-covered the default four-level encoder, invalid channel configurations and
-incorrect input rank/channel count. Single-voxel bottlenecks were rejected;
-valid even-sized, odd-sized and thin volumes were accepted.
+covered the default four-level encoder/decoder, invalid channel configurations,
+incorrect feature counts, ranks, channels, batches and spatial ordering. A
+double-precision numerical gradient check passed for both inputs of the decoder
+block. Single-voxel bottlenecks were rejected; valid even-sized, odd-sized and
+thin volumes were accepted.
 
 The training environment is not yet validated. The user's Rangpur terminal output
 confirmed Python 3.11 with PyTorch 2.13.0+cu130 in the existing `torch` Conda
@@ -139,13 +171,13 @@ in the final report. This preparation commit is not a finished submission.
 
 Codex assisted with interpreting the assignment, comparing project options,
 checking and configuring the GitHub fork, drafting this plan and the ignore rules,
-and implementing the residual block, encoder and synthetic checks. The checks
-exercise feature shapes, gradients through all encoder stages, state restoration,
-input-size limits and residual-path behavior; they do not validate segmentation
-quality. No training or empirical validation on HipMRI has been performed.
-The student still needs to review and understand the
-implementation. This section will be updated with the assistance received and
-the checks actually performed during development.
+and implementing the residual block, encoder, decoder and synthetic checks. The
+checks exercise feature shapes, gradients through the encoder and decoder,
+independent skip contributions, state restoration, input-size limits, default
+dropout behavior and residual-path behavior; they do not validate segmentation quality. No training
+or empirical validation on HipMRI has been performed. The student still needs
+to review and understand the implementation. This section will be updated with
+the assistance received and the checks actually performed during development.
 
 ## References
 
