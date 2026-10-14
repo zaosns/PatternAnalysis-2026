@@ -1,8 +1,8 @@
 # HipMRI Segmentation with a 3D Improved U-Net
 
-**Status: project planning.** This branch currently contains a directory
-placeholder, this initial plan and Git ignore rules. Model implementation, data
-auditing, training and evaluation have not started. No experimental results or
+**Status: first model component.** `modules.py` now contains a 3D residual block
+and a small check using synthetic tensors. The complete network, data loader,
+training and evaluation are not implemented. No HipMRI experimental results or
 completed feasibility check-off are claimed.
 
 ## Proposed problem and approach
@@ -34,8 +34,10 @@ These are planned experiments, not completed work or assumed improvements.
 
 ## Development milestones
 
-1. Confirm access to Rangpur GPU resources and the HipMRI data. The course-listed
-   location is `/home/groups/comp3710/HipMRI_Study_open`; access has not been verified.
+1. Confirm access to Rangpur GPU resources and the HipMRI data. A directory listing
+   at `/home/groups/comp3710/HipMRI_Study_open` has succeeded, and PyTorch imports
+   with `python -s` in the existing Conda environment. GPU execution and reading
+   individual MRI/label files still need verification.
 2. Audit patient identifiers, image/label pairs, label meanings, voxel spacing,
    orientation and spatial alignment.
 3. Group all scans from each patient into one train/validation/test partition
@@ -47,26 +49,56 @@ These are planned experiments, not completed work or assumed improvements.
 6. Implement the main model, run the comparisons and analyze failure cases.
 7. Complete the report, reproduction instructions and final submission.
 
-## Planned code structure
+## Code structure
 
-The following Python files are not yet included in this branch:
-
-| File | Planned responsibility |
-| --- | --- |
-| `modules.py` | PyTorch model components |
-| `dataset.py` | Loading, preprocessing, patient splits and augmentation |
-| `train.py` | Training, validation, testing, checkpointing and learning curves |
-| `predict.py` | Loading saved weights and visualizing test inference |
+| File | Responsibility | Current state |
+| --- | --- | --- |
+| `modules.py` | PyTorch model components | Residual block only |
+| `dataset.py` | Loading, preprocessing, patient splits and augmentation | Not implemented |
+| `train.py` | Training, validation, testing, checkpointing and learning curves | Not implemented |
+| `predict.py` | Loading saved weights and visualizing test inference | Not implemented |
 
 This README will develop into the final technical report. Training and inference
 commands will be added once they exist and have been verified.
 
+## First component and synthetic check
+
+`ResidualBlock3D` accepts `[N, C, D, H, W]` feature tensors and preserves spatial
+dimensions. It uses two pre-activation 3D convolutions with instance normalization
+and LeakyReLU, inspired by the context modules described by Isensee et al. The
+project uses configurable channel-wise dropout and a 1x1x1 shortcut projection
+when the channel count changes. This is a building block, not a claim of a full
+paper reproduction. The complete encoder/decoder and deep supervision are pending.
+
+From this project directory, with PyTorch available, run:
+
+```bash
+python -s modules.py
+```
+
+The synthetic CPU check covers a batch size of one, odd spatial dimensions,
+equal and changing channel counts, finite outputs and gradients, restoration
+of a state dictionary, and the shortcut with the learned branch zeroed out.
+Dropout is disabled for these tiny checks to avoid randomly dropping every
+feature channel. It does not load MRI data, train a segmentation model or
+measure Dice/IoU.
+
 ## Environment and reproducibility
 
-The Python/PyTorch/CUDA environment and exact dependency versions have not yet
-been selected or validated. Record tested versions, seeds, split-generation
-instructions, hyperparameters, commands and checkpoint retrieval instructions
-as the implementation is developed.
+The component check passed locally on macOS CPU with Python 3.13.9 and PyTorch
+2.14.0 on 14 October 2026, using seed 3710. Input validation was also checked for
+incorrect rank/channel count and single-voxel inputs; valid even-sized and thin
+volumes were accepted without modifying the input tensor.
+
+The training environment is not yet validated. The user's Rangpur terminal output
+confirmed Python 3.11 with PyTorch 2.13.0+cu130 in the existing `torch` Conda
+environment when user site-packages were excluded with `python -s`. Importing that
+package does not establish GPU/driver compatibility; the CUDA execution check
+has not completed. Local component checks and Rangpur training validation are
+separate milestones.
+
+Record tested versions, seeds, split-generation instructions, hyperparameters,
+commands and checkpoint retrieval instructions as the implementation develops.
 
 Keep datasets, patient-level metadata, model weights and raw experiment output
 outside Git. The project `.gitignore` covers common locations and file types;
@@ -84,11 +116,13 @@ in the final report. This preparation commit is not a finished submission.
 ## Artificial Intelligence Usage Disclosure
 
 Codex assisted with interpreting the assignment, comparing project options,
-checking and configuring the GitHub fork, and drafting this plan and the ignore
-rules. No model or data-processing implementation is included in this branch,
-and no training or empirical model validation has been performed. The student
-must review the plan and future implementation. This section will be updated
-with the assistance received and the checks actually performed during development.
+checking and configuring the GitHub fork, drafting this plan and the ignore rules,
+and implementing the first residual block and its synthetic checks. The checks
+exercise shapes, gradients, state restoration and residual-path behavior; they
+do not validate segmentation quality. No training or empirical validation on
+HipMRI has been performed. The student still needs to review and understand the
+implementation. This section will be updated with the assistance received and
+the checks actually performed during development.
 
 ## References
 
