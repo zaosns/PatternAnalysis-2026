@@ -1,9 +1,9 @@
 # HipMRI Segmentation with a 3D Improved U-Net
 
-**Status: first model component.** `modules.py` now contains a 3D residual block
-and a small check using synthetic tensors. The complete network, data loader,
-training and evaluation are not implemented. No HipMRI experimental results or
-completed feasibility check-off are claimed.
+**Status: residual block and encoder.** `modules.py` contains a 3D residual block,
+a configurable encoder and checks using synthetic tensors. The decoder,
+segmentation heads, data loader, training and evaluation are not implemented.
+No HipMRI experimental results or completed feasibility check-off are claimed.
 
 ## Proposed problem and approach
 
@@ -53,7 +53,7 @@ These are planned experiments, not completed work or assumed improvements.
 
 | File | Responsibility | Current state |
 | --- | --- | --- |
-| `modules.py` | PyTorch model components | Residual block only |
+| `modules.py` | PyTorch model components | Residual block and encoder |
 | `dataset.py` | Loading, preprocessing, patient splits and augmentation | Not implemented |
 | `train.py` | Training, validation, testing, checkpointing and learning curves | Not implemented |
 | `predict.py` | Loading saved weights and visualizing test inference | Not implemented |
@@ -61,14 +61,27 @@ These are planned experiments, not completed work or assumed improvements.
 This README will develop into the final technical report. Training and inference
 commands will be added once they exist and have been verified.
 
-## First component and synthetic check
+## Model components and synthetic checks
 
 `ResidualBlock3D` accepts `[N, C, D, H, W]` feature tensors and preserves spatial
 dimensions. It uses two pre-activation 3D convolutions with instance normalization
 and LeakyReLU, inspired by the context modules described by Isensee et al. The
 project uses configurable channel-wise dropout and a 1x1x1 shortcut projection
 when the channel count changes. This is a building block, not a claim of a full
-paper reproduction. The complete encoder/decoder and deep supervision are pending.
+paper reproduction.
+
+`Encoder3D` applies a full-resolution stem and residual block, then uses stride-two
+3D convolutions and residual blocks to form a feature pyramid. It returns a tuple
+from highest resolution to bottleneck, retaining earlier features for future
+decoder skip connections. Each downsampled axis has size `ceil(n / 2)`; input
+dimensions need not be divisible by powers of two. A bottleneck containing only
+one spatial voxel is rejected before computation because instance normalization
+cannot use it. Thin volumes with more than one voxel at the bottleneck are allowed.
+
+The default widths `(16, 32, 64, 128)` and dropout probability `0.3` are configurable
+starting points, not settings selected through HipMRI experiments. The decoder,
+segmentation heads and deep supervision are pending; encoder outputs are features,
+not class scores or masks.
 
 From this project directory, with PyTorch available, run:
 
@@ -76,19 +89,28 @@ From this project directory, with PyTorch available, run:
 python -s modules.py
 ```
 
-The synthetic CPU check covers a batch size of one, odd spatial dimensions,
-equal and changing channel counts, finite outputs and gradients, restoration
-of a state dictionary, and the shortcut with the learned branch zeroed out.
-Dropout is disabled for these tiny checks to avoid randomly dropping every
-feature channel. It does not load MRI data, train a segmentation model or
-measure Dice/IoU.
+The synthetic CPU checks cover:
+
+- The residual block: equal and changing channel counts, finite outputs and
+  gradients, state restoration, and the shortcut with the learned branch zeroed out.
+- The encoder: batches of one and two, even and odd spatial dimensions, single-
+  and multi-channel inputs, the shapes of all returned features, and state
+  restoration. A loss using only the bottleneck checks that gradients reach
+  every encoder stage and the input.
+- Thin volumes, a single encoder level, and rejection of a single-voxel
+  bottleneck in both training and evaluation modes.
+
+Dropout is disabled for these tiny checks to avoid randomly dropping every feature
+channel. The checks do not load MRI data, train a segmentation model or measure
+Dice/IoU.
 
 ## Environment and reproducibility
 
-The component check passed locally on macOS CPU with Python 3.13.9 and PyTorch
-2.14.0 on 14 October 2026, using seed 3710. Input validation was also checked for
-incorrect rank/channel count and single-voxel inputs; valid even-sized and thin
-volumes were accepted without modifying the input tensor.
+The residual-block and encoder checks passed locally on macOS CPU with Python
+3.13.9 and PyTorch 2.14.0 on 14 October 2026, using seed 3710. Additional checks
+covered the default four-level encoder, invalid channel configurations and
+incorrect input rank/channel count. Single-voxel bottlenecks were rejected;
+valid even-sized, odd-sized and thin volumes were accepted.
 
 The training environment is not yet validated. The user's Rangpur terminal output
 confirmed Python 3.11 with PyTorch 2.13.0+cu130 in the existing `torch` Conda
@@ -117,10 +139,11 @@ in the final report. This preparation commit is not a finished submission.
 
 Codex assisted with interpreting the assignment, comparing project options,
 checking and configuring the GitHub fork, drafting this plan and the ignore rules,
-and implementing the first residual block and its synthetic checks. The checks
-exercise shapes, gradients, state restoration and residual-path behavior; they
-do not validate segmentation quality. No training or empirical validation on
-HipMRI has been performed. The student still needs to review and understand the
+and implementing the residual block, encoder and synthetic checks. The checks
+exercise feature shapes, gradients through all encoder stages, state restoration,
+input-size limits and residual-path behavior; they do not validate segmentation
+quality. No training or empirical validation on HipMRI has been performed.
+The student still needs to review and understand the
 implementation. This section will be updated with the assistance received and
 the checks actually performed during development.
 
