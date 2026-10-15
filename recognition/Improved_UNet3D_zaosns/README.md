@@ -1,10 +1,13 @@
 # HipMRI Segmentation with a 3D Improved U-Net
 
-**Status: segmentation prototype with summed-output deep supervision.**
+**Status: segmentation prototype and initial data preparation utilities.**
 `modules.py` connects the residual encoder, skip-connected decoder and multi-scale
-segmentation heads, with checks using synthetic inputs and labels. The data
-loader, training and evaluation are not implemented. No HipMRI experimental
-results or completed feasibility check-off are claimed.
+segmentation heads. `objectives.py` adds a soft Dice loss and per-class Dice/IoU,
+checked with synthetic inputs and labels. `dataset.py` validates case manifests
+and groups scans into patient-level splits. Checks are separate in `tests/`.
+MRI voxel loading, preprocessing, the training loop and real-data evaluation are
+not implemented. No HipMRI experimental results or completed feasibility
+check-off are claimed.
 
 ## Proposed problem and approach
 
@@ -55,14 +58,16 @@ These are planned experiments, not completed work or assumed improvements.
 | File | Responsibility | Current state |
 | --- | --- | --- |
 | `modules.py` | PyTorch model components | Residual encoder, decoder, segmentation heads and summed-output deep supervision |
-| `dataset.py` | Loading, preprocessing, patient splits and augmentation | Not implemented |
+| `objectives.py` | Segmentation loss and overlap metrics | Soft Dice loss and per-volume Dice/IoU |
+| `dataset.py` | Loading, preprocessing, patient splits and augmentation | Manifest validation and patient-grouped splitting; voxel loading and transforms pending |
 | `train.py` | Training, validation, testing, checkpointing and learning curves | Not implemented |
 | `predict.py` | Loading saved weights and visualizing test inference | Not implemented |
+| `tests/` | Synthetic checks using standard-library `unittest` | Model, objective and data-preparation tests |
 
 This README will develop into the final technical report. Training and inference
 commands will be added once they exist and have been verified.
 
-## Model components and synthetic checks
+## Model components
 
 `ResidualBlock3D` accepts `[N, C, D, H, W]` feature tensors and preserves spatial
 dimensions. It uses two pre-activation 3D convolutions with instance normalization
@@ -133,55 +138,135 @@ values from `0` through `num_classes - 1`. An eventual inference caller can use
 `logits.argmax(dim=1)` to obtain class indices. Cross entropy is used here to
 check gradient flow, not as a finalized choice of training objective.
 
-From this project directory, with PyTorch available, run:
+## Dice loss and overlap metrics
 
-```bash
-python -s modules.py
+`SoftDiceLoss` accepts raw floating-point logits `[N, C, D, H, W]` and
+`torch.long` class-index labels `[N, D, H, W]`. It applies softmax over classes
+and computes the following for each sample and selected class, summing over
+spatial dimensions only:
+
+```text
+soft_dice = (2 * sum(probability * target_one_hot) + smooth)
+            / (sum(probability) + sum(target_one_hot) + smooth)
+loss = mean(1 - soft_dice)
 ```
 
-The synthetic CPU checks cover:
+This uses the linear denominator of the multiclass Dice formulation in the
+architecture reference and the supplied segmentation lecture (slide 28).
+The per-sample averaging and smoothing policy are explicit project choices.
+`smooth=1e-5` is added to both numerator and denominator. Selected classes remain
+in the loss even when their target is empty, so predicted probability mass is
+still penalized. Half/bfloat16 logits are converted to float32 before softmax
+and accumulation; float64 inputs retain their precision. The smoothing value
+must be finite, positive and within the accumulation dtype's normal range.
 
-- The residual block: equal and changing channel counts, finite outputs and
-  gradients, state restoration, and the shortcut with the learned branch zeroed out.
-- The encoder: batches of one and two, even and odd spatial dimensions, single-
-  and multi-channel inputs, the shapes of all returned features, and state
-  restoration. A loss using only the bottleneck checks that gradients reach
-  every encoder stage and the input.
-- Thin volumes, a single encoder level, and rejection of a single-voxel
-  bottleneck in both training and evaluation modes.
-- The connected encoder and decoder: matching input resolution for even and odd
-  inputs, non-doubling channel widths, finite gradients and state restoration.
-  Encoder features are also detached into independent gradient-tracking tensors
-  to check that every skip and the bottleneck affect the highest-resolution output.
-- Thin-volume decoding, the minimum two-level configuration, and rejection of
-  a decoder configuration with only one encoder level.
-- The default four-level encoder/decoder and rejection of malformed feature
-  counts, ranks, channels, batches, spatial sizes, single-voxel features and
-  reversed feature ordering. The ordering check uses equal channel counts so
-  it must detect the spatial error instead of only a channel mismatch.
-- Default encoder dropout (`0.3`): training outputs repeat with the same seed
-  and change with a different seed, gradients remain finite, and evaluation
-  outputs remain identical when the seed changes.
-- The segmentation head: known negative and greater-than-one scores are returned
-  unchanged, including for a single voxel; invalid class counts and input shapes
-  are rejected.
-- The connected model with deep supervision enabled and disabled: even and odd
-  spatial sizes, one and two input channels, two and four output classes, finite
-  cross-entropy gradients through the encoder, decoder and every instantiated
-  head, unchanged inputs, and state restoration.
-  Forward checks also cover the default four-level model and a thin two-level
-  volume.
-- Deep supervision: a hand-computed three-scale sum with odd sizes, independent
-  gradients into every scale and every head, invalid feature inputs, and exact
-  equivalence to the single head when only one decoder level exists.
+`dice_iou_per_class` accepts two class-index masks `[N, D, H, W]`, plus an explicit
+`num_classes`. Convert predictions with `logits.argmax(dim=1)` before calling.
+It returns `dice` and `iou` tensors `[N, K]`, a boolean `valid` tensor of the same
+shape, `valid_count` for each class in the supplied batch, and `class_ids` identifying
+the original label index for each column. These hard metrics use unsmoothed
+integer overlap counts and are separate from the differentiable training loss.
 
-The gradient-connectivity checks disable dropout to avoid randomly dropping every
-feature channel in a tiny block. The separate dropout check uses the default
-probability with wider features and seeds 17 and 18. All of these checks run with
-the command above. They do not load MRI data, train a segmentation model or
-measure Dice/IoU.
+| Class presence in a sample | Dice/IoU | Valid for averaging |
+| --- | --- | --- |
+| Present in both prediction and target | Computed from overlap | Yes |
+| Present in only one | 0 | Yes, including false positives on empty targets |
+| Absent in both | NaN (undefined) | No |
+
+For both APIs, `include_background=True` includes all classes by default.
+Setting it to `False` excludes index 0 only. A future data loader must first
+verify and map labels to contiguous indices with background at 0. The actual
+HipMRI class mapping is not yet established. Ignore labels and multilabel masks
+are not supported by this initial interface.
+
+For case-level evaluation, call the metric on reconstructed volumes. Retain all
+per-case rows before computing per-class means and valid counts; do not average
+batch means or slice/patch scores as if they were full-case scores. Exclude NaNs
+when averaging, report the valid count, and keep the mean undefined when a class
+has no valid cases. The empty-class policy is a documented project convention
+to revisit if the course supplies a specific evaluation protocol.
+
+Dice alone can give weak gradients for empty target classes; whether to combine
+it with cross entropy must still be selected using training/validation experiments.
+This step does not establish the final loss configuration or segmentation accuracy.
+
+## Case manifests and patient splits
+
+`load_manifest` reads a JSON list with exactly four fields per entry. For example,
+the following illustrates one entry, using fictitious identifiers and paths:
+
+```json
+[
+  {
+    "case_id": "example_scan_01",
+    "patient_id": "example_patient_01",
+    "image_path": "images/example_scan_01.nii.gz",
+    "label_path": "labels/example_scan_01.nii.gz"
+  }
+]
+```
+
+Keep real manifests in the ignored `data/` directory or outside the repository.
+Relative image/label paths resolve against the manifest's directory; absolute
+paths are also supported. Every referenced file must exist. Case IDs must be
+unique, and IDs are case-sensitive with no surrounding whitespace. The current
+interface requires one image and one label file per scan and rejects reuse of a
+physical file, including symlink/hardlink aliases and image/label cross-use.
+
+`split_cases_by_patient(cases, validation_patients=..., test_patients=..., seed=3710)`
+returns `PatientSplit.train`, `.validation` and `.test`, each a tuple of
+`CaseRecord` objects. Counts refer to patients, not scans. All scans sharing a
+supplied patient ID stay together, and at least one patient must remain in training.
+Zero-sized validation/test groups are allowed for preparation checks; experiment
+holdout counts have not yet been selected.
+
+Patient IDs are sorted before a local seeded shuffle, and cases are sorted within
+each partition. The same records and seed reproduce the split in the same Python
+environment, regardless of input order and without changing the global RNG.
+Adding/removing patients can change assignments; save the final assignments
+outside Git before experiments. This initial split is not stratified by labels.
+
+These checks validate references and supplied IDs only. They cannot establish
+actual patient identity, detect duplicate contents in separately copied files,
+or verify MRI/label alignment. Real identifiers, label values, orientations and
+voxel spacing must be audited before implementing voxel loading and transforms.
+
+## Synthetic tests
+
+Run all checks from this project directory, with PyTorch available:
+
+```bash
+python -s -m unittest discover -s tests -v
+```
+
+To run one group, use `python -s -m unittest tests.test_modules -v`, substituting
+`tests.test_objectives` or `tests.test_dataset` as needed. No additional test
+framework is required. Production files no longer contain executable self-tests.
+
+- `test_modules.py`: residual shortcuts, feature/logit shapes, even/odd/thin inputs,
+  invalid configurations, state restoration, dropout behavior, gradients through
+  every encoder/decoder/head, independent skip contributions, hand-calculated
+  coarse-to-fine sums, and equivalence of both head settings at one decoder level.
+- `test_objectives.py`: hand-calculated soft/hard scores, false positives/negatives,
+  empty classes, background selection, numerical gradient checking, half/bfloat16
+  accumulation over 131072 voxels, extreme logits, invalid inputs, and Dice
+  gradients with deep supervision enabled and disabled.
+- `test_dataset.py`: relative/absolute paths, missing or reused files, invalid
+  records, file aliases, complete and disjoint patient groups, reproducibility,
+  unchanged global RNG state, and invalid split counts. These tests create and
+  clean up temporary placeholder files; they do not contain real MRI volumes.
+
+Gradient-connectivity checks disable dropout to avoid randomly dropping every
+channel in a tiny block. A separate test checks default dropout (`0.3`) with wider
+features and seeds 17 and 18. These tests do not train a model or establish
+segmentation accuracy on HipMRI.
 
 ## Environment and reproducibility
+
+After extracting the checks into `tests/` and adding manifest/split validation,
+all 15 `unittest` methods passed locally on 15 October 2026 in the same macOS CPU
+environment described below. Data-preparation tests used temporary synthetic
+files, so this is not evidence of successful MRI loading or real-data evaluation.
 
 The component and segmentation model checks passed locally on macOS CPU with Python
 3.13.9 and PyTorch 2.14.0 on 14 October 2026, using seed 3710. Additional checks
@@ -190,6 +275,10 @@ incorrect feature counts, ranks, channels, batches and spatial ordering. A
 double-precision numerical gradient check passed for both inputs of the decoder
 block. Single-voxel bottlenecks were rejected; valid even-sized, odd-sized and
 thin volumes were accepted.
+
+The objective checks also passed with the same local Python/PyTorch environment
+on 14 October 2026, using seed 3710. No CUDA execution or real-data performance
+has been validated by these checks.
 
 The training environment is not yet validated. The user's Rangpur terminal output
 confirmed Python 3.11 with PyTorch 2.13.0+cu130 in the existing `torch` Conda
@@ -219,11 +308,15 @@ in the final report. This preparation commit is not a finished submission.
 Codex assisted with interpreting the assignment, comparing project options,
 checking and configuring the GitHub fork, drafting this plan and the ignore rules,
 and implementing the residual block, encoder, decoder, segmentation heads,
-summed-output deep supervision and synthetic checks. The checks exercise
+summed-output deep supervision, Dice loss, overlap metrics, manifest validation
+and patient-grouped splits. Codex also moved synthetic checks into `tests/`.
+The checks exercise
 feature/logit shapes, gradients through the model, independent skip and scale
 contributions, coarse-to-fine output summation, state restoration, input-size
-limits, default dropout behavior and residual-path behavior; they do not validate
-segmentation quality. No training or empirical validation on HipMRI has been
+limits, default dropout behavior, residual-path behavior, known overlap scores,
+empty-class policies, objective gradients, file references and patient-group
+separation; they do not validate segmentation quality or real patient identity.
+No training or empirical validation on HipMRI has been
 performed. The student still needs to review and understand the implementation.
 This section will be updated with the assistance received and the checks actually
 performed during development.
@@ -239,3 +332,6 @@ performed during development.
   implementation adaptations described above.
 - Cicek et al., [3D U-Net: Learning Dense Volumetric Segmentation from Sparse
   Annotation](https://arxiv.org/abs/1606.06650). Proposed comparison reference.
+- PyTorch documentation for [softmax](https://docs.pytorch.org/docs/2.14/generated/torch.nn.functional.softmax.html)
+  and [one-hot encoding](https://docs.pytorch.org/docs/2.14/generated/torch.nn.functional.one_hot.html).
+  Tensor conversion APIs used by the Dice loss.
