@@ -1,6 +1,6 @@
 # HipMRI Segmentation with a 3D Improved U-Net
 
-**Status: segmentation prototype with a complete training command and a passed small GPU continuation check.**
+**Status: 3D and 2D full-split pilots continued to four epochs; final comparison and held-out evaluation pending.**
 `modules.py` connects the residual encoder, skip-connected decoder and multi-scale
 segmentation heads. `objectives.py` adds a soft Dice loss and per-class Dice/IoU,
 checked with synthetic inputs and labels. `dataset.py` validates case manifests,
@@ -10,9 +10,17 @@ normalized, downsampled volumes while preserving their outer field of view.
 model selection, logs and resumable checkpoints. Checks are separate in `tests/`.
 Strict deterministic mode passed a two-training-case/one-validation-case CUDA
 continuation diagnostic; this is not a formal accuracy experiment.
-Formal experiments, the 2D baseline, prediction visualization and held-out test
-evaluation are still pending. The source-data audit, frozen patient split and preprocessing checks
-are recorded below. No completed comparative experiments or completed
+The subsequent 173-training-scan/19-validation-scan pilot completed successfully;
+epoch-2 case-mean prostate validation Dice was 0.5243 on the factor-2 grid.
+The selected checkpoint has also produced private diagnostic panels for five
+validation patients. A slice-wise 2D U-Net and its resumable training command are
+implemented. Both models subsequently resumed from epoch 2 to epoch 4 under
+unchanged settings. The 2D model's zero prostate/rectum validation overlap at
+epoch 2 became positive in all 19 validation scans at epoch 4. Prostate Dice
+at epoch 4 is 0.6611 / 0.6851 for 2D / 3D by scan mean, and 0.5568 / 0.6793
+when each validation patient has equal weight. Longer comparisons and held-out
+test evaluation are still pending. The source-data audit, frozen patient split and preprocessing checks
+are recorded below. No completed final comparative evaluation or completed
 feasibility check-off are claimed.
 
 ## Proposed problem and approach
@@ -29,8 +37,9 @@ be finalized after a data and resource audit.
 
 ## Planned experiments
 
-- Implement a 2D U-Net baseline and the proposed 3D model. Use the same held-out
-  patients and evaluate both on consistently reconstructed case volumes.
+- Train the implemented 2D U-Net baseline and proposed 3D model under a declared
+  comparison budget. Use the same held-out patients and evaluate both on
+  consistently reconstructed case volumes.
 - If resources permit, add a plain 3D U-Net comparison to separate the effect of
   volumetric context from the effect of the architectural improvements.
 - Report per-class Dice and IoU, parameter count, peak GPU memory and per-case
@@ -60,20 +69,92 @@ These are planned experiments, not completed work or assumed improvements.
 6. Implement the main model, run the comparisons and analyze failure cases.
 7. Complete the report, reproduction instructions and final submission.
 
+## Feasibility review - draft for tutor consultation
+
+**15 October 2026. Tutor check-off: not completed, as confirmed by the student.**
+This draft must be presented and discussed in the required practical consultation;
+preparing the document does not complete the hurdle.
+Section 3 requires the review before extensive computing expenditure and asks
+for preliminary evidence such as a baseline smoke test or resource estimate.
+Short, bounded preliminary training can therefore inform this review; completing
+every prediction/export feature is not a technical prerequisite to training.
+
+**User need and scope.** This MRI contour-drafting prototype is for imaging
+researchers and specialist reviewers. The question is whether 3D context improves
+prostate terminal-slice and adjacent-organ boundaries enough to justify its cost
+over 2D U-Net. Outputs require human review; this coursework cannot establish
+clinical suitability or reduced contouring time.
+
+**Proposed acceptance criteria, to fix before held-out evaluation:**
+
+1. Preserve the patient-disjoint 28/5/5-patient split (173/19/19 scans), validate
+   every training/validation input, and retain configuration, hashes and checkpoints.
+2. Target case-mean prostate Dice of at least 0.70 on held-out test data. Report
+   Dice/IoU and valid counts for every foreground class on a declared common
+   factor-2 grid. Select checkpoints using validation loss only.
+3. Compare against an implemented 2D U-Net on the same split/grid. Measure prostate
+   Dice over each end's 20% of prostate-bearing axial slices as a boundary proxy;
+   report adjacent-organ overlap errors and whether 3D improves the trade-off.
+   Fix slice rounding, empty-label rules and weighting before test evaluation.
+   These proxies do not establish clinical boundary safety.
+4. Target at most 4 GiB peak allocated GPU tensor memory and two-second median
+   forward-pass inference per prepared case on one A100. Measure synchronized,
+   warmed-up inference and report loading/preprocessing separately. These are
+   proposed limits, not measured guarantees.
+5. Inspect 3-5 representative failures with image, ground truth, prediction and
+   false-positive/false-negative panels, including terminal slices and disconnected
+   predictions. Report individual cases and patient-level summaries.
+
+**Model and course concepts.** The proposed Hard-difficulty 3D Improved U-Net uses
+residual blocks, skip connections and summed multiscale supervision, informed by
+Isensee et al. It applies convolutional spatial context, normalization,
+gradient-based optimization, cross entropy and Dice objectives. Starting settings
+are factor-2 volumes, channels 16/32/64/128, dropout 0.3, batch one and Adam 0.001;
+they have not been optimized through comparisons.
+
+**Preliminary evidence.** All 211 pairs have audited geometry and a frozen split;
+all 192 training/validation volumes passed preprocessing checks. The initial 68
+synthetic checks and an exact small CUDA continuation check passed; the expanded
+local suite now passes all 107 tests, including 2D and prediction diagnostics.
+A two-epoch
+full-split A100 pilot took 10 minutes 52 seconds, peaking at 2.26 GiB allocated
+tensor memory. Prostate validation Dice rose from 0.4693 to 0.5243; bladder Dice
+fell from 0.7563 to 0.7152. These are preliminary case-weighted validation scores,
+not evidence of reaching the test target. A subsequent two-epoch 2D full-split
+pilot completed on 16 October, with zero prostate/rectum validation Dice and
+1.56 GiB peak allocated GPU tensor memory. Both pilots have now continued to
+four epochs: 2D prostate/rectum overlap became positive in every validation
+scan, and 3D case-mean prostate Dice reached 0.6851. These remain short-training
+validation results from five patients. Longer comparison experiments and
+comparable GPU inference timing remain pending.
+
+**Risks, budget and fallback.** Risks include class imbalance, lost small regions
+after downsampling, variable spacing, only five independent validation patients
+and GPU queues. The pilot stayed within its 30-minute GPU cap. Validation
+predictions have been inspected and the 2D training pipeline now passes a small
+CPU diagnostic. Choose a longer comparison budget after tutor consultation.
+Complete tutor check-off before extensive experiments.
+Fallbacks are a standard 2D baseline or narrower 3D channels; any resolution
+change requires renewed boundary checks.
+
 ## Code structure
 
 | File | Responsibility | Current state |
 | --- | --- | --- |
 | `modules.py` | PyTorch model components | Residual encoder, decoder, segmentation heads and summed-output deep supervision |
+| `baseline2d.py` | 2D U-Net comparison model | Shared slice-wise network with full-volume input/output; no learned cross-slice operations |
 | `objectives.py` | Segmentation loss and overlap metrics | Soft Dice loss and per-volume Dice/IoU |
 | `dataset.py` | Loading, preprocessing, patient splits and augmentation | Manifest and frozen-split validation, strict NIfTI loading, normalization, matched downsampling and lazy single-case batches; augmentation pending |
-| `train.py` | Training, validation, testing and learning curves | Multi-epoch command, validation-loss model selection, resumable state and metrics JSON/CSV; held-out testing and curve rendering pending |
+| `train.py` | Training and validation | Multi-epoch command, validation-loss model selection, resumable state and metrics JSON/CSV; held-out testing pending |
+| `train_baseline2d.py` | 2D training command | Whole-case objective and optimizer steps, shared data preparation/metrics, architecture-tagged resumable checkpoints |
+| `plot_history.py` | Learning-curve export | Validates saved run metrics and exports loss/per-class validation Dice to PNG or PDF |
 | `checkpoint.py` | Save and restore training state | Epoch-boundary model/optimizer/configuration/progress and RNG persistence |
-| `predict.py` | Loading saved weights and visualizing test inference | Not implemented |
+| `predict.py` | Inspecting 2D/3D checkpoints on validation scans | Architecture/source binding, prepared-grid prediction, six-class voxel counts/confusion, saved-metric comparison and limited inference timing; held-out testing pending |
+| `prediction_panels.py` | Rendering private prediction diagnostics | Fixed ground-truth slice selection with prostate/bladder errors and optional rectum plane/error column |
 | `tests/` | Synthetic checks using standard-library `unittest` | Model, objective, data preparation, epoch functions, checkpoints and end-to-end runner tests |
 
-This README will develop into the final technical report. The training command
-is documented below; inference commands will follow when implemented and verified.
+This README will develop into the final technical report. Training and validation
+inspection commands are documented below; final held-out evaluation is pending.
 
 ## Model components
 
@@ -148,6 +229,322 @@ For class-index targets, labels have shape `[N, D, H, W]`, dtype `torch.long` an
 values from `0` through `num_classes - 1`. An eventual inference caller can use
 `logits.argmax(dim=1)` to obtain class indices. Cross entropy is used here to
 check gradient flow, not as a finalized choice of training objective.
+
+## Slice-wise 2D U-Net baseline
+
+`baseline2d.py` implements the encoder/decoder topology of Ronneberger et al.'s
+[U-Net](https://arxiv.org/abs/1505.04597), adapted with padded convolutions,
+affine instance normalization and configurable widths. Each level has two
+3x3 Conv2d/InstanceNorm2d/ReLU blocks; 2x2 max pooling reduces H/W, and learned
+2x2 transposed convolutions plus skip concatenation restore them. Odd H/W
+sizes use bilinear size repair when needed. A final 1x1 convolution returns six
+raw class logits. There are no residual units, dropout or deep-supervision heads.
+This is an adapted baseline, not an exact reproduction of the original paper.
+
+`SliceWiseUNet2D` maps `[N, C, D, H, W]` to `[N, K, D, H, W]`. It batches all
+prepared D planes through the same 2D network, then restores their original
+case/depth order. Convolutions and instance statistics are independent between
+planes in both training and evaluation. D follows the source NIfTI K axis; the
+code does not infer anatomical base/apex or reorient scans.
+
+With widths 16/32/64/128, one input channel and six classes, the baseline has
+**482,422 trainable parameters**, compared with **2,349,986** in the current 3D
+model. Equal channel widths do not imply equal parameter counts, receptive
+fields or computational cost.
+
+### Shared training protocol and limits
+
+`train_baseline2d.py` uses the original NIfTI manifest and frozen patient split,
+the same factor-2 preparation, Adam learning rate 0.001, seed-plus-epoch case
+order, and validation-loss checkpoint selection as `train.py`. All prepared
+planes are retained, including planes with no target organ. The reconstructed
+case logits receive voxel-mean cross entropy plus foreground soft Dice, with
+**one optimizer update per complete case**. Validation Dice/IoU are computed
+on whole case volumes, not averaged from per-slice scores. This deliberately
+matches the existing case-weighted 3D objective; it is not conventional shuffled
+slice-minibatch training. It does not use the separate `keras_slices_data` split.
+
+The shared preprocessing includes whole-volume normalization and 3D trilinear
+downsampling. Consequently, the correct distinction is that the 2D **network**
+has no learned inter-slice context; the full input pipeline is not independent
+between slices. The 3D model additionally differs in residual connections,
+deep supervision, activation and dropout. A resulting performance difference
+cannot be attributed solely to dimensionality. A plain 3D ablation remains an
+optional follow-up.
+
+Example two-epoch diagnostic command from the project directory, on an allocated
+GPU with locally prepared manifest/split files:
+
+```bash
+python -s train_baseline2d.py \
+  --manifest private/manifest.json --split private/split.json \
+  --output-dir private/runs/baseline2d-diagnostic --epochs 2 \
+  --device cuda --num-classes 6 --channels 16 32 64 128 \
+  --downsample-factor 2 --learning-rate 0.001 --seed 3710 \
+  --deterministic --assume-label-units-from-image
+```
+
+The manifest/split paths above are examples, not distributed data. Resume by
+repeating the same settings and output directory with `--resume` and the desired
+total `--epochs`. Checkpoints bind architecture, source hashes, environment,
+preparation and optimizer settings. Model, Adam, progress and Python/Torch RNG
+state are restored; a 3D checkpoint cannot be resumed here. Epoch publication
+uses an atomic checkpoint followed by atomic `run.json`, with CSV derived from
+the committed state. `plot_history.py` accepts these logs; `predict.py` now
+recognizes both the original 3D checkpoint format and the architecture-tagged
+2D format. It supports validation diagnostics for either model; native-grid
+prediction-volume export and held-out evaluation remain pending.
+
+The 17 new synthetic checks cover shape/gradient behavior, slice independence,
+case/depth ordering, every-case optimizer updates, held-out voxel isolation,
+whole-volume overlap, exact CPU continuation, configuration/architecture
+mismatches and recovery after an interrupted epoch publication. They passed
+together locally. Both models now have four-epoch full-split pilots and recorded
+training-memory peaks. Longer comparison training, matched A100 inference
+measurements and held-out testing are pending. Fix the formal comparison budget and report
+patient-level summaries alongside case means before drawing comparative claims;
+complete the tutor feasibility check-off before extensive experiments.
+
+### Small real-data functionality check
+
+On 15 October 2026, Rangpur job `663986` completed on `r730-0` in **52 seconds**,
+with four CPU cores and a 15-minute limit (`COMPLETED`, exit `0:0`). All 17 new
+tests passed on the server before the real-data check. The diagnostic used two
+training cases from different original training patients, including the
+largest-depth case, and one case from an original validation patient. This
+temporary subset did not replace the frozen full split or read test voxels.
+
+With the default widths and factor-2 inputs, a continuous two-epoch run matched
+a one-epoch run resumed to epoch two **exactly** in model tensors, Adam state,
+Python/Torch RNG state and every non-timing history field. Each run made four
+case-level optimizer updates. Source and original manifest/split hashes were
+unchanged. The CPU check used Python 3.11.15, PyTorch 2.13.0+cu130, NumPy 2.4.6
+and NiBabel 5.4.2; CUDA was not used.
+
+All 31 downloaded text/source artifacts passed their SHA-256 checks, and saved
+CSV metrics agreed with `run.json`. The snapshot, commands, submission,
+accounting, logs and hashes remain private locally and on Rangpur; checkpoint
+binaries remain on Rangpur. This establishes that the training/resume pipeline
+works on the selected real cases. It is not a full-split accuracy result, an
+A100 performance measurement or evidence that 2D is better or worse than 3D.
+
+### Two-epoch full-split 2D pilot - completed
+
+On 16 October 2026, job `664048` completed on `a100-2` from 00:55:51 to 01:07:01
+Brisbane time: **11 minutes 10 seconds**, `COMPLETED`, exit `0:0`, within its
+20-minute limit. It used one A100-PCIE-40GB and one CPU core. An independent
+largest-depth training-case CUDA forward/backward/update check passed before
+a freshly initialized two-epoch run over all 173 training and 19 validation
+scans. The final checkpoint records 346 Adam updates per parameter. No test
+voxels were loaded and no additional epochs were scheduled.
+
+The frozen split, factor-2 grid, six labels, widths 16/32/64/128, Adam 0.001,
+seed 3710, one CPU thread, full-case objective, case order and selection policy
+match the shared settings of 3D pilot `663615`. The completed 192-case CPU
+preflight is reused with verified unchanged preprocessing source and metadata.
+The prediction/export command is not needed for the training command's built-in
+validation, checkpoint selection and training-memory measurements. This is a
+fixed short-training budget for preliminary comparison, not a final experiment.
+Training loss fell from 1.4816 to 0.7818; validation loss fell from 0.9116 to
+0.6372. The minimum-validation-loss checkpoint is epoch 2. The following are
+case-mean metrics on the same factor-2 validation grid, with 19 valid scans for
+each class in both runs:
+
+| Class | 2D Dice, epoch 2 | 3D Dice, epoch 2 | 2D IoU, epoch 2 | 3D IoU, epoch 2 |
+| --- | ---: | ---: | ---: | ---: |
+| Body | 0.9739 | 0.9572 | 0.9492 | 0.9182 |
+| Bones | 0.8634 | 0.7104 | 0.7607 | 0.5538 |
+| Bladder | 0.7420 | 0.7152 | 0.6009 | 0.5685 |
+| Rectum | 0.0000 | 0.6951 | 0.0000 | 0.5353 |
+| Prostate | 0.0000 | 0.5243 | 0.0000 | 0.3617 |
+
+In the 2D run, rectum and prostate Dice/IoU are exactly zero in all 19 validation
+scans at both epochs; these are valid scores, not missing metrics. Zero proves
+no predicted/target overlap. The saved metrics do not include predicted voxel
+counts, so they do not distinguish absent predictions from misplaced ones.
+Bladder also had zero overlap in every case at epoch 1, then improved in every
+case at epoch 2. Class imbalance, insufficient training and optimization or
+architectural differences are hypotheses to investigate, not established causes.
+The losses and other classes improved, so the evidence does not support calling
+the entire pipeline unsuccessful or concluding that 2D has inferior final
+performance. Further inspection should include class counts and prediction
+panels before selecting a longer training schedule.
+
+The 2D peak allocated training tensor memory was **1,600.6 MiB (1.56 GiB)**,
+versus **2,317.3 MiB (2.26 GiB)** in the 3D pilot. The sum of two recorded epoch
+times was 641.9 seconds for 2D and 641.7 seconds for 3D. These individual runs
+include data loading/preparation and validation, use different A100 nodes and
+have no repetitions; they do not establish inference latency or a reliable speed
+advantage. Case means also give more weight to patients with repeated scans;
+these 19 scans represent only five independent validation patients.
+
+All 28 collected source/text artifacts passed SHA-256 verification. CSV and
+JSON metrics, per-case Dice/IoU relationships, shared 2D/3D configuration fields,
+source hashes, checkpoint progress and Adam update counts were cross-checked.
+Plans, configuration, submission/queue/accounting records, logs and checkpoint
+hashes are private locally and on Rangpur; checkpoint binaries remain on Rangpur.
+Feasibility check-off remains outstanding.
+
+### Follow-up: all-validation voxel counts and fixed prediction panels
+
+CPU job `664186` completed in **67 seconds** on `r730-0` on 16 October 2026,
+using four cores. It reran the 22 prediction/panel tests, then inspected the
+unchanged best 2D checkpoint (epoch 2) across all **19 validation scans**.
+Only the same five patient examples used for the earlier 3D inspection were
+rendered, preserving their numbering and original selected planes. A rectum
+maximum-area plane/error column was added. The five figures were visually
+reviewed and remain private; no training updates or test voxel reads occurred.
+
+The integer confusion matrices resolve the immediate zero-Dice behavior:
+**CPU argmax produced no rectum or prostate voxels in any of the 19 cases**,
+despite nonempty targets for both classes in every case. Thus TP and FP are
+both zero for these classes, and every target voxel is a false negative.
+Their target counts exactly match the earlier full-validation preprocessing
+audit. Summing voxel assignments across the prepared validation grids gives:
+
+| Target class | Target voxels | Predicted as Body | Predicted as background | Predicted as bladder | Predicted as bones |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Rectum | 31,277 | 20,120 (64.33%) | 9,401 (30.06%) | 1,755 (5.61%) | 1 (0.003%) |
+| Prostate | 12,236 | 3,371 (27.55%) | 1,853 (15.14%) | 7,010 (57.29%) | 2 (0.016%) |
+
+These are pooled **voxel** proportions, not case or patient averages. The
+prediction overlays show bladder false positives at each example's largest
+prostate plane, with complete prostate/rectum false negatives. In example 2,
+the bladder maximum-area plane also has 692 false-negative voxels versus 431
+true positives. The model's errors therefore include both suppressed classes
+and imperfect localization of a class it does predict. These observations do
+not establish class imbalance, insufficient training or architecture as the
+cause of the missing labels.
+
+The CPU/CUDA maximum absolute Dice/IoU difference was **0.000201464**, within
+the diagnostic bound of 0.005 fixed before execution. Only one of 19 cases
+matched every saved metric at the stricter tolerances, so the raw
+`all_saved_metrics_match` remains false. Original CUDA metrics remain the
+pilot's reported scores; the CPU count diagnostic does not prove exact backend
+equivalence. All 31 collected files passed SHA-256 checks, matrix totals and
+row/column sums agree with the volume counts, and independently recomputed
+Dice/IoU agree with the confusion matrices. The original run, checkpoint,
+source and frozen-input hashes are unchanged.
+
+### Fixed continuation to four epochs - completed
+
+On 16 October 2026, the authorized duration check resumed both models from
+their latest epoch-2 checkpoints in separate new directories. Original pilot
+runs and copied initial states were preserved. Model, Adam and RNG states were
+restored; no loss, learning rate, preprocessing, architecture or threshold was
+changed. Each continuation had a fixed 20-minute limit and stopped after two
+additional epochs, without an automatic extension.
+
+| Model | Job | Brisbane start/end | Elapsed | Result |
+| --- | --- | --- | --- | --- |
+| 2D | `664231` | 02:15:48-02:26:53 | 11 min 05 s | Completed, exit `0:0` |
+| 3D | `664232` | 02:26:53-02:38:20 | 11 min 27 s | Completed, exit `0:0` |
+
+Both ran on `a100-9` with one A100-PCIE-40GB and one CPU core. Both histories
+retain their original first two rows exactly and append only epochs 3 and 4,
+each using 173 training and 19 validation scans. The latest checkpoints record
+**692 Adam updates per parameter**. The best validation-loss checkpoint is
+epoch 4 for both models, so selected-checkpoint and fixed-epoch-4 results
+coincide. Twenty-five collected text artifacts passed hash checks; source,
+initial-state, configuration and frozen-input checks also passed.
+
+The following are the saved **CUDA case-mean validation scores** on the common
+factor-2 grid; all 19 scans have valid scores for every foreground class:
+
+| Class | 2D Dice, epoch 4 | 3D Dice, epoch 4 | 2D IoU, epoch 4 | 3D IoU, epoch 4 |
+| --- | ---: | ---: | ---: | ---: |
+| Body | 0.9797 | 0.9666 | 0.9603 | 0.9356 |
+| Bones | 0.8826 | 0.8179 | 0.7906 | 0.6930 |
+| Bladder | 0.8740 | 0.8373 | 0.7926 | 0.7479 |
+| Rectum | 0.7576 | 0.7517 | 0.6128 | 0.6034 |
+| Prostate | 0.6611 | 0.6851 | 0.5088 | 0.5324 |
+
+The 2D rectum/prostate overlap remained zero at epoch 3, then became positive
+in all 19 scans at epoch 4. Under this unchanged recipe, additional training
+therefore helped within the declared budget; the earlier zero scores do not
+establish inability to learn these classes. This observation does not isolate
+every cause of the earlier behavior or establish converged performance.
+
+Repeated scans require a second aggregation: average scores within each
+patient, then average those five patient means with equal weight. At epoch 4,
+prostate patient-macro Dice is **0.5568 for 2D and 0.6793 for 3D**; rectum
+patient-macro Dice is **0.7429 and 0.7726**, respectively. The two patients with
+eight scans each contribute 16/19 scan weight but only 2/5 patient weight.
+3D has higher mean prostate Dice in four of five patients; 2D is higher in the
+other patient. These are descriptive comparisons from five patients, with
+architectural confounds and only one seed. No final model superiority claim,
+held-out result or matched GPU inference benchmark follows from them.
+
+### Paired epoch-4 error inspection
+
+CPU job `664377` completed on `r730-0` in **2 minutes 19 seconds** on 16 October
+2026, with four cores and a 15-minute cap (`COMPLETED`, exit `0:0`). It inspected
+all 19 validation scans for each unchanged epoch-4 checkpoint. The original
+five patient examples retained their numbers and ground-truth-selected planes;
+example 6 was added before looking at predictions because it had the lowest
+saved 3D prostate Dice and the largest 2D advantage for that organ. It belongs
+to the same patient as example 1. This targeted selection includes both models'
+worst cases; it is not another cohort sample or a basis for averaging scores.
+
+All twelve PNGs were visually reviewed and their displayed counts checked
+against the saved metadata. Paired panels use identical case identities, label counts, grid geometry,
+selected depths, intensity windows and orientation. The images retain array
+axes rather than claiming an anatomical base/apex reorientation. Whole-volume
+confusion matrices distinguish missing target voxels (FN) from extra predicted
+voxels (FP). Pooling **prostate voxels** over all 19 prepared grids gives:
+
+| Model | Target | Predicted | TP | FP | FN | Pooled precision | Pooled recall |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2D | 12,236 | 9,985 | 7,671 | 2,314 | 4,565 | 0.7683 | 0.6269 |
+| 3D | 12,236 | 16,606 | 10,105 | 6,501 | 2,131 | 0.6085 | 0.8258 |
+
+These pooled ratios are not case means or patient-macro metrics. The 2D
+predicted prostate volume is smaller than its target in 16/19 scans; 3D's is
+larger in 16/19. Thus 3D recovers more target voxels at the cost of substantially
+more extra voxels in this checkpoint comparison. Volume bias alone cannot
+describe spatial alignment, and neither model has a uniform error pattern.
+
+Specific paired findings, with whole-volume counts unless a plane is named:
+
+- **Example 5, worst 2D prostate:** target 447 voxels, only 18 predicted, all
+  correct; 429 FN, zero FP, recall 0.0403. Of the target, 358 voxels become Body
+  and 71 become rectum. This is severe under-segmentation, not a mostly misplaced
+  large prediction. At the maximum-area plane only 1/70 target voxels is found;
+  both the first and last labelled planes are entirely missed. 3D improves
+  recall to 0.5347, but still has 208 FN and 169 FP, so it also needs correction.
+- **Example 6, worst 3D prostate:** target 503 voxels versus 1,190 predicted;
+  TP 446, FP 744, FN 57. Recall is 0.8867 but precision only 0.3748. Its excess
+  predictions include 485 Body, 142 bladder and 117 rectum target voxels. The
+  2D prediction has fewer FP (206) but more FN (118). At the largest bladder
+  plane 3D misses 202/303 bladder voxels and adds 29 prostate voxels where no
+  prostate is labelled on that plane.
+- **Example 2, a shared bladder failure:** bladder recall is only 0.2525 for
+  2D and 0.2075 for 3D, despite precisions above 0.96. The missed target is
+  overwhelmingly assigned to Body. On the largest bladder plane, 2D has 292
+  TP / 831 FN and 3D has 180 TP / 943 FN. Lower overall validation loss has
+  not eliminated this individual failure.
+- **Example 4, the highest prostate whole-volume Dice in both runs:** the
+  first labelled plane still has 29/44 FN in 2D and 36/44 FN in 3D. Good
+  volume-level overlap therefore does not guarantee good terminal-plane
+  coverage, nor does higher whole-volume Dice guarantee better coverage on
+  every plane. The last labelled plane similarly has 16/36 FN in 2D and
+  23/36 FN in 3D, whereas the maximum-area plane improves from 71/142 FN
+  in 2D to 26/142 FN in 3D. These selected planes show that an improvement
+  centrally need not extend to both labelled ends.
+
+All 26 collected artifacts passed SHA-256 checks. Confusion matrices independently
+reproduce Dice/IoU and match the earlier target-label histograms. The maximum
+absolute CPU/CUDA score differences were **0.000931501 for 2D** and
+**0.000311375 for 3D**, below the predeclared 0.005 diagnostic bound; strict
+match flags remain false. Saved CUDA metrics above remain the reported scores.
+This CPU inspection performed no training updates or held-out voxel reads.
+
+The next measurement should fix and implement the terminal-region definition
+and aggregation rules, then apply them to both frozen checkpoints on validation
+data. The six selected panels already show missed ends and adjacent-class
+confusion, but do not establish cohort-wide terminal-region scores. These
+opposing FP/FN patterns do not yet justify a shared threshold or loss change.
+Keep the existing checkpoints as controls before any single-variable experiment.
 
 ## Dice loss and overlap metrics
 
@@ -412,6 +809,33 @@ A native/preprocessed overlay from the first training case showed no obvious
 image/label displacement. These are geometry and numerical checks, not evidence
 of segmentation quality. Figures and full case-level logs remain private.
 
+### Complete training/validation input preflight
+
+CPU job `663602` completed on `vcpu-2` on 15 October 2026 in 5 minutes 10 seconds.
+It used the committed reader/preprocessor from `6b06ca7` to load all 173 training
+scans (28 patients) and 19 validation scans (5 patients). All 192 passed finite
+image, integer-label, geometry and factor-2 preprocessing checks. Test voxels
+were not read. Source and frozen manifest/split hashes were checked unchanged.
+
+Every inspected source and prepared label volume contained all six classes;
+no class disappeared entirely after downsampling. The one deeper training volume
+became `72 x 128 x 128`; the other 172 training volumes and all 19 validation
+volumes became `64 x 128 x 128`. Labels explicitly inherited MRI millimetre units,
+and the maximum discrepancy across outer-field-of-view corners was zero.
+Retaining each class does not prove that thin boundaries or disconnected regions
+survived downsampling unchanged.
+
+The pooled prepared-voxel proportions show substantial imbalance:
+
+| Class | Share of training grid voxels | Share of validation grid voxels |
+| --- | ---: | ---: |
+| Rectum | 0.1438% | 0.1570% |
+| Prostate | 0.1013% | 0.0614% |
+
+These denominators include all image-grid voxels, including background. They are
+not proportions of patients, scans or foreground-only tissue. No nonfinite or
+constant-nonzero images were found. Full case-level records remain private.
+
 ## Single-epoch training and validation
 
 `train_one_epoch` accepts a model, an iterable of `(image, target)` batches,
@@ -460,7 +884,8 @@ python -s train.py \
   --assume-label-units-from-image --deterministic
 ```
 
-This example requests two epochs; it is not a tested real-data training budget.
+This is the initial two-epoch pilot budget reported below, not a converged
+training schedule.
 The unit-assumption flag is required for the school labels' unknown units.
 CUDA is selected explicitly and an unavailable GPU is an error. Use `--device cpu`
 for small local checks. `python -s train.py --help` lists all options. The command
@@ -537,6 +962,130 @@ the prior committed epoch and discards any uncommitted checkpoint. CSV can be
 rebuilt from JSON. An interruption before the first completed epoch restarts
 from the recorded seed/configuration. No partial-epoch recovery is attempted.
 
+## Learning curves
+
+After a completed epoch, copy the private `run.json` from the run directory and
+render it locally with Matplotlib installed. No MRI or checkpoint download is
+needed:
+
+```bash
+python -s plot_history.py private/example/run.json --output private/learning-curve.png
+```
+
+Use an existing output directory. The tool accepts PNG or PDF and refuses to
+replace a file unless `--overwrite` is given. It checks epoch order, the six-class
+HipMRI schema and consistency between per-case scores and their reported means.
+It plots training/validation loss and case-weighted validation Dice for Body,
+Bones, Bladder, Rectum and Prostate, marks the epoch selected by validation loss,
+and leaves undefined scores as gaps. These are preprocessed-grid validation
+curves, not held-out test results. Two points from a short pilot show only an
+initial change, not convergence. The exporter was exercised with the saved
+two-epoch diagnostic, including missing metrics and invalid-input rejection;
+its figure was visually checked.
+
+## Validation prediction inspection
+
+`predict.py` loads the checkpoint selected by minimum validation loss and
+inspects explicitly requested validation cases. It requires the original frozen
+manifest, split and resolved file paths, plus unchanged model/preprocessing/metric
+source. It rejects training or test case IDs before opening any image volume.
+An absent architecture tag identifies the original 3D format; the explicit
+`slice_wise_unet2d` tag selects the 2D model and its complete saved configuration.
+Unknown or mixed architecture tags are rejected. Each format is checked against
+its own training-source hashes, and the same prepared-volume metrics apply to
+both networks.
+Run this on Rangpur, where the original data paths and checkpoint are available:
+
+```bash
+python -s predict.py \
+  --run-dir /path/to/completed/training-run \
+  --manifest /path/to/original/manifest.json \
+  --split /path/to/original/split.json \
+  --case-ids VALIDATION_CASE_1 VALIDATION_CASE_2 \
+  --checkpoint-sha256 SAVED_BEST_CHECKPOINT_SHA256 \
+  --output-dir private/validation-inspection \
+  --device cuda --threads 1 --repeats 3
+```
+
+Replace the placeholders with the preserved run records. The checkpoint digest
+argument is optional in the general command; it was supplied for the pilot
+inspection. A shared run lock refuses concurrent training writes. The command
+checks the checkpoint epoch, configuration and finite parameter tensors, loads
+with `weights_only=True`, restores no optimizer/RNG state, and uses evaluation
+mode without gradients. The output directory must be new.
+By default, every selected case is rendered. `--panel-case-ids` can specify a
+unique subset of those cases; every selected case still receives full metrics
+and counts. Thus all validation scans can be quantified while retaining only
+a small fixed set of figures. An unselected, duplicate or test panel ID is
+rejected before any image is loaded.
+
+For each selected scan, it repeats the training preprocessing, predicts all
+voxels on the prepared grid and compares per-class Dice/IoU with the saved
+best-epoch validation row. Class order, row widths, validity masks and null rules
+are checked before comparison. Differences are recorded with relative tolerance
+`1e-5` and absolute tolerance `1e-6`; completion alone does not mean agreement,
+so inspect `all_saved_metrics_match` in `prediction.json`.
+
+Each case also records `metrics.voxel_counts`: a six-class integer confusion
+matrix with **ground-truth rows and prediction columns**, target/predicted voxel
+counts, true positives, false positives and false negatives. Counts include
+background and cover the complete prepared grid. They distinguish a zero Dice
+caused by no class predictions from zero-overlap predictions placed elsewhere;
+neither by itself establishes the training failure's underlying cause.
+
+Each private PNG contains MRI, ground-truth overlay, prediction overlay,
+prostate errors and bladder errors. Error colors are green for true positives,
+magenta for false positives and cyan for false negatives. The Body/background
+overlays are hidden to keep the organ masks visible. Full-volume scores appear
+above the panels; TP/FP/FN counts beneath each panel concern that displayed slice.
+`--include-rectum-panels` adds a sixth rectum-error column and appends the
+maximum-area ground-truth rectum plane. Existing plane candidates and their
+order are retained, duplicates merge, and an absent rectum adds no plane.
+
+Slice selection is fixed from ground truth: the first prostate-containing plane,
+the largest prostate area, the last prostate-containing plane, and the largest
+bladder area. Area ties use the smallest depth index and duplicate planes merge
+their selection reasons. An empty prostate uses the middle plane as an explicit
+fallback; an empty bladder adds no plane. This targeted view does not show all
+errors, including possible false positives outside the selected planes.
+
+All columns retain the same array orientation, with no anatomical reorientation.
+Prepared `D/H/W` correspond to source `K/J/I`; original voxel-centre coordinates,
+affines, direction vectors and spacing are retained in JSON. Pixel aspect uses
+the affine-derived H/W spacing. Obliquity/shear is recorded but not rectified.
+Prostate label-range endpoints are slice-selection proxies, not independently
+identified anatomical base/apex. These are factor-2 validation diagnostics,
+not native-resolution or held-out test results.
+
+Each case has one warmup and, by default, three timed forward passes. CUDA is
+synchronized around each measurement; loading, preprocessing, transfers, argmax,
+metrics and rendering are excluded. The reported allocated-memory peak includes
+model/input tensors, forward computation and prediction postprocessing. This
+small selected-case check is not a complete cohort inference benchmark.
+
+Keep PNGs and `prediction.json` private: the JSON contains case/patient IDs and
+the PNGs contain source-derived MRI imagery. The output also records checkpoint,
+run, source and figure hashes. No full MRI or prediction volumes are exported.
+
+The original thirteen synthetic tests cover a real small training/checkpoint/prediction
+sequence, selected-validation-only loading, rejection of incompatible/corrupt
+checkpoints, invalid metric metadata, evaluation mode, fixed slice selection,
+asymmetric error masks, physical aspect and output protection:
+
+```bash
+python -s -m unittest tests.test_predict tests.test_predict_baseline2d tests.test_prediction_panels -v
+```
+
+The real API test caught and fixed the tuple/list representation difference
+between checkpoint configuration and JSON. All 13 checks passed locally and on
+Rangpur after the correction; these tests do not establish real-image prediction
+quality. The completed real-data inspection is recorded below.
+The 2D/count extension adds eight tests for real 2D checkpoint prediction,
+hand-computed confusion counts, absent/disjoint class predictions, data/source
+binding, architecture rejection and selective rendering. One additional panel
+test checks rectum plane selection, errors and all six columns' orientation.
+All 22 current prediction/panel tests pass locally and on Rangpur.
+
 ## Checkpoint save and restore
 
 `save_checkpoint(path, model, optimizer, completed_epochs=..., best_validation_loss=...)`
@@ -571,18 +1120,20 @@ training command above selects it using validation loss and excludes test data.
 
 ## Synthetic tests
 
-Run all checks from this project directory, with PyTorch, NumPy and NiBabel
-available. The tested NiBabel version is 5.4.2:
+Run all checks from this project directory, with PyTorch, NumPy, NiBabel and
+Matplotlib available. Prediction-panel tests require Matplotlib. The tested
+NiBabel version is 5.4.2:
 
 ```bash
-python -s -m pip install nibabel==5.4.2
+python -s -m pip install nibabel==5.4.2 matplotlib
 python -s -m unittest discover -s tests -v
 ```
 
 To run one group, use `python -s -m unittest tests.test_modules -v`, substituting
 `tests.test_objectives`, `tests.test_dataset`, `tests.test_nifti`,
 `tests.test_preprocessing`, `tests.test_training_data`, `tests.test_train`,
-`tests.test_checkpoint` or `tests.test_runner` as needed.
+`tests.test_checkpoint`, `tests.test_runner`, `tests.test_baseline2d` or
+`tests.test_baseline2d_runner` as needed.
 No additional test framework is required. Production files no longer contain
 executable self-tests.
 
@@ -619,6 +1170,12 @@ executable self-tests.
   validation-only selection and ties, strict JSON missing-class metrics, exact
   CPU continuation with dropout, configuration/path protection and recovery
   after interrupted epoch commits.
+- `test_baseline2d.py`: 2D architecture, even/odd/thin shapes, raw logits, gradients,
+  independent slices, volume ordering, configuration/state round trips and
+  invalid input rejection.
+- `test_baseline2d_runner.py`: whole-case updates and metrics, test voxel isolation,
+  exact model/Adam/RNG continuation, source/configuration/architecture binding,
+  output protection and interrupted epoch recovery.
 
 Gradient-connectivity checks disable dropout to avoid randomly dropping every
 channel in a tiny block. A separate test checks default dropout (`0.3`) with wider
@@ -776,9 +1333,120 @@ after, and all downloaded log/JSON/CSV artifact hashes were verified.
 This demonstrates exact continuation for this small run on the same hardware and
 software configuration. It does not establish cross-device/version equivalence,
 long-run stability or segmentation quality. The earlier default-mode differences
-remain recorded. The next experiment should use the frozen training/validation
-partitions to check learning and resource needs before selecting a longer budget;
-the held-out test partition remains unused.
+remain recorded. The subsequent full-split pilot is described below; the held-out
+test partition remains unused for training, model selection and quality evaluation.
+
+## Two-epoch full-split pilot
+
+On 15 October 2026, GPU job `663615` completed on Rangpur `a100-9` with exit code
+`0:0`, using the training source from commit `6b06ca7`. It followed the complete
+CPU preflight and trained on all 173 training scans from 28 patients, validating
+on all 19 scans from five separate patients after each epoch. This was a fixed
+two-epoch pilot with a 30-minute job limit, not an extended training experiment.
+
+The configuration used factor-2 preprocessing, six classes, channels
+`16/32/64/128`, dropout `0.3`, batch size one, Adam learning rate `0.001`, seed
+`3710`, one CPU thread and explicit strict deterministic CUDA mode. Label units
+were inherited from the MRI as documented above. No augmentation, scheduler,
+mixed precision or volume cache was used. The model has **2,349,986 trainable
+parameters**.
+
+| Epoch | Training loss | Validation loss | Prostate validation Dice | Epoch duration |
+| --- | ---: | ---: | ---: | ---: |
+| 1 | 0.925852 | 0.575863 | 0.4693 | 329.91 s |
+| 2 | 0.527102 | 0.405766 | 0.5243 | 311.83 s |
+
+Epoch 2 was selected by the lowest validation loss. Its foreground metrics are:
+
+| Class | Validation Dice | Validation IoU | Valid scans |
+| --- | ---: | ---: | ---: |
+| Body | 0.9572 | 0.9182 | 19 |
+| Bones | 0.7104 | 0.5538 | 19 |
+| Bladder | 0.7152 | 0.5685 | 19 |
+| Rectum | 0.6951 | 0.5353 | 19 |
+| Prostate | 0.5243 | 0.3617 | 19 |
+
+Each score is the arithmetic mean of per-scan scores on the prepared grid;
+these are not pooled-voxel scores or equally weighted patient means. There are
+only five independent validation patients, and repeated scans from one patient
+are correlated. Two patients supply 16 of the 19 scans (84.2% of the case-weighted
+mean), so patient-level summaries will also be needed. Both epochs had valid
+scores for every foreground class in all 19 validation scans.
+
+![Two-epoch training loss and per-class validation Dice](figures/full-split-pilot-learning.png)
+
+The full Slurm job took **10 minutes 52 seconds**. Peak allocated CUDA tensor
+memory was **2317.33 MiB (2.26 GiB)**. Epoch durations include loading,
+preprocessing, training and validation; they are not inference-time measurements.
+Allocated tensor memory also excludes CUDA context and other non-tensor overhead.
+
+Training and validation loss decreased, and prostate Dice improved by about
+0.055. Bladder Dice decreased from 0.7563 to 0.7152 despite the lower total loss,
+showing why aggregate loss alone is insufficient. Two epochs do not establish
+convergence, a reliable upward trend or improvement over 2D. Prostate Dice remains
+below the proposed 0.70 target, which must eventually be evaluated on held-out
+test data. No test quality measurements were made.
+
+The driver verified the frozen data/source hashes, sample order/counts, finite
+metrics, strict CUDA policy, model-state loading and checkpoint progress. Local
+collection verified SHA-256 for all 19 archived text artifacts, JSON/CSV agreement
+and each per-case Dice/IoU relationship. Raw logs, configurations, individual
+case metrics and artifact hashes remain private; checkpoint files and their
+recorded hashes remain on Rangpur. Only the reviewed aggregate figure is included
+in this report.
+
+### Selected validation predictions
+
+On 15 October 2026, CPU job `663827` completed the inspection in 48 seconds on
+`r730-0`, including the 13 new tests and five-case prediction/figure generation.
+The preceding GPU job `663814` was cancelled while still pending after the
+scheduler estimated a lengthy wait. Its submission/cancellation records remain
+preserved. The CPU job used four threads and the same epoch-2 checkpoint and
+preprocessing. Original run, checkpoint and source hashes remained unchanged.
+
+Five cases were selected from the original CUDA validation metrics, one from
+each validation patient. The sequential rules were: lowest prostate Dice;
+lowest bladder Dice among remaining patients; largest bladder Dice decrease
+among remaining patients; highest prostate Dice among remaining patients; and
+lowest prostate Dice among remaining patients. Ties used case ID order. This is
+targeted diagnosis, not random sampling or a new estimate of cohort performance.
+The case/patient-to-example mapping is kept private.
+
+| Example | CPU prostate Dice | CPU bladder Dice | Observation on fixed selected planes |
+| --- | ---: | ---: | --- |
+| 1 | 0.3752 | 0.8048 | Prostate false positives persist at its largest-area and last labelled planes |
+| 2 | 0.5388 | 0.4075 | Largest bladder plane has 234 TP and 889 FN voxels: substantial under-segmentation |
+| 3 | 0.6326 | 0.6857 | Last prostate plane has 1 TP, 90 FP and 21 FN; bladder extent also has errors |
+| 4 | 0.7066 | 0.8013 | First prostate plane has 0 TP and 44 FN despite comparatively high whole-volume Dice |
+| 5 | 0.3878 | 0.6991 | Last prostate plane has 18 TP and 89 FP; the largest bladder plane also over-segments |
+
+All five PNGs were visually reviewed and their displayed counts cross-checked
+against the saved metadata. The highest-scoring example still misses its first
+labelled prostate plane, so whole-volume overlap alone cannot establish terminal
+slice quality. The selected cases show both over- and under-segmentation; these
+few planes do not diagnose their causes or establish error rates for the cohort.
+Local organ crops would improve detail in the eventual report figures.
+
+CPU recomputation was **not an exact reproduction of CUDA metrics**. Each case
+had at least one score outside the strict comparison tolerance; the largest
+absolute difference across five classes, Dice/IoU and five cases was
+`0.000941366`. Before this CPU attempt, the private execution plan specified a
+`0.005` cross-backend diagnostic bound; all differences were below it. This is
+a sanity bound for inspecting figures, not a segmentation-quality threshold or
+a guarantee of backend equivalence. Strict-match flags remain false in the raw
+record. The original CUDA metrics above remain the pilot's reported results.
+
+Each CPU case had one warmup and one measured forward pass (1.331-1.353 seconds).
+This limited timing excludes loading/preprocessing/transfers/postprocessing and
+is not an A100 inference benchmark. GPU inference-time acceptance remains
+unmeasured. The CPU run has no CUDA memory measurement.
+
+All 18 downloaded artifacts were verified against the archive/file SHA-256
+records. PNGs, case-level JSON and logs remain private. No test voxels were
+opened and no training updates were performed during this inspection. The 2D
+baseline described above retains these boundary errors as explicit comparison
+targets. Tutor check-off and a fixed evaluation protocol remain
+necessary before extensive experiments or held-out test evaluation.
 
 Record tested versions, seeds, split-generation instructions, hyperparameters,
 commands and checkpoint retrieval instructions as the implementation develops.
@@ -825,6 +1493,46 @@ Codex investigated the difference using a synthetic strict-CUDA loss probe,
 implemented the opt-in deterministic mode and explicit voxel-mean cross entropy,
 added loss/gradient equivalence and reproducibility-policy tests, and ran the
 strict GPU continuation diagnostic, which passed exactly on the small subset.
+Codex implemented and checked the learning-curve exporter, prepared the one-page
+feasibility draft, ran the complete 192-volume CPU preflight and two-epoch
+full-split GPU pilot, and preserved and cross-checked their records. Codex rendered
+and visually reviewed the aggregate learning curve. The feasibility check-off
+has not been completed by the student.
+Codex added the checkpoint-bound validation prediction command, fixed-slice
+diagnostic panels and 13 synthetic tests. The real API test exposed and helped
+fix checkpoint/JSON tuple-list compatibility. Codex selected five validation
+patients using recorded rules, cancelled the queued GPU inspection, ran the
+CPU inspection, preserved the CPU/CUDA metric differences and visually reviewed
+the five private figures. The held-out test set was not evaluated.
+Codex implemented the adapted slice-wise 2D U-Net, the separate resumable
+whole-case training command and 17 synthetic checks. It documented the shared
+preprocessing/objective and the remaining architectural confounds in the 2D/3D
+comparison. The original 3D runtime source files were left unchanged.
+Codex ran the small real-data CPU baseline diagnostic, verified exact
+continuous/resumed training, and preserved and checked its 31 text/source
+artifacts, Slurm records and checkpoint hashes. Codex then submitted the fixed
+two-epoch 2D full-split A100 pilot, verified its CUDA precheck and completed
+training records, and cross-checked all 28 collected source/text artifacts and
+the preliminary 2D/3D comparison. Zero rectum/prostate overlap is retained as an
+observed limitation; its cause and final performance have not been established.
+Codex extended the shared prediction command to 2D checkpoints, integer voxel
+confusion/count diagnostics and selective panels, and added optional rectum
+views with nine new tests. It ran the complete-validation CPU diagnosis,
+checked all 31 collected artifacts and visually reviewed the five fixed panels.
+It recorded the absence of class-4/5 predictions on CPU and their actual
+misclassification counts, while retaining CPU/CUDA discrepancies and leaving
+the underlying training cause unresolved. Codex then submitted and verified
+the fixed continuation of both pilots from epoch 2 to epoch 4, preserving the
+original runs, model/Adam/RNG restoration, unchanged configurations, complete
+histories and 692 cumulative Adam steps per parameter. It checked and archived
+the completion records and computed scan means and patient-macro summaries.
+Codex subsequently ran CPU inference on all 19 validation scans for each
+epoch-4 checkpoint, checked 26 collected artifacts and all confusion counts,
+and visually reviewed twelve paired panels from six selected scans. It
+documented under/over-segmentation, adjacent-class confusion and terminal-plane
+failures, preserving the original CUDA scores and CPU discrepancy flags.
+The predictions and weights were not changed based on the inspection, and no
+additional training or held-out evaluation was performed in that diagnostic.
 The checks exercise
 feature/logit shapes, gradients through the model, independent skip and scale
 contributions, coarse-to-fine output summation, state restoration, input-size
@@ -848,6 +1556,9 @@ performed during development.
   implementation adaptations described above.
 - Cicek et al., [3D U-Net: Learning Dense Volumetric Segmentation from Sparse
   Annotation](https://arxiv.org/abs/1606.06650). Proposed comparison reference.
+- Ronneberger, Fischer and Brox, [U-Net: Convolutional Networks for Biomedical
+  Image Segmentation](https://arxiv.org/abs/1505.04597). Encoder/decoder topology
+  reference for the adapted 2D baseline.
 - Dowling and Greer, [Labelled weekly MR images of the male pelvis](https://doi.org/10.25919/45t8-p065),
   CSIRO Data Access Portal. The attached
   [BriefDataDescription.txt](https://data.csiro.au/dap/ws/v2/collections/52549/support/5034)
