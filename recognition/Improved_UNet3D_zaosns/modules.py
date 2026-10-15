@@ -343,6 +343,17 @@ class SegmentationModel3D(nn.Module):
             else SegmentationHead3D(self.decoder.channels[0], num_classes)
         )
         self.encoder = Encoder3D(in_channels, self.decoder.channels, dropout)
+        self._config = {
+            "num_classes": num_classes,
+            "in_channels": in_channels,
+            "channels": self.decoder.channels,
+            "dropout": float(dropout),
+            "deep_supervision": deep_supervision,
+        }
+
+    def get_config(self) -> dict:
+        """Return constructor settings for checkpoints; recreate to change them."""
+        return dict(self._config)
 
     def forward(self, x: Tensor) -> Tensor:
         """Produce full-resolution raw logits from an input image volume."""

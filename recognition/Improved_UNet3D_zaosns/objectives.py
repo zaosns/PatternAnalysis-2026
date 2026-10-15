@@ -1,7 +1,7 @@
 """PyTorch-only Dice loss and per-volume overlap metrics for 3D segmentation.
 
 Labels are contiguous class indices, with index 0 reserved for background when
-excluding it. The actual HipMRI label mapping is still to be audited. Synthetic
+excluding it. The source HipMRI label mapping is documented in README.md. Synthetic
 checks live in tests/test_objectives.py and require no MRI data. Run from this
 directory: python -s -m unittest discover -s tests -v.
 """
