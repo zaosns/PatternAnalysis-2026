@@ -1,6 +1,6 @@
 # HipMRI Segmentation with a 3D Improved U-Net
 
-**Status: 3D and 2D full-split pilots continued to four epochs; final comparison and held-out evaluation pending.**
+**Status: four-epoch 2D/3D pilots, terminal diagnostics and matched A100 inference benchmark completed; final comparison and held-out evaluation pending.**
 `modules.py` connects the residual encoder, skip-connected decoder and multi-scale
 segmentation heads. `objectives.py` adds a soft Dice loss and per-class Dice/IoU,
 checked with synthetic inputs and labels. `dataset.py` validates case manifests,
@@ -19,7 +19,12 @@ unchanged settings. The 2D model's zero prostate/rectum validation overlap at
 epoch 2 became positive in all 19 validation scans at epoch 4. Prostate Dice
 at epoch 4 is 0.6611 / 0.6851 for 2D / 3D by scan mean, and 0.5568 / 0.6793
 when each validation patient has equal weight. Longer comparisons and held-out
-test evaluation are still pending. The source-data audit, frozen patient split and preprocessing checks
+test evaluation are still pending. Fixed source-K terminal-region diagnostics
+now cover all 19 validation scans for both epoch-4 checkpoints, with separate
+scan and patient summaries. A same-GPU forward benchmark measured cohort-median
+latencies of 13.36 ms / 49.96 ms and peak allocated tensor memory of
+445.89 MiB / 565.98 MiB for 2D / 3D, excluding data preparation and postprocessing.
+The source-data audit, frozen patient split and preprocessing checks
 are recorded below. No completed final comparative evaluation or completed
 feasibility check-off are claimed.
 
@@ -71,71 +76,64 @@ These are planned experiments, not completed work or assumed improvements.
 
 ## Feasibility review - draft for tutor consultation
 
-**15 October 2026. Tutor check-off: not completed, as confirmed by the student.**
-This draft must be presented and discussed in the required practical consultation;
-preparing the document does not complete the hurdle.
-Section 3 requires the review before extensive computing expenditure and asks
-for preliminary evidence such as a baseline smoke test or resource estimate.
-Short, bounded preliminary training can therefore inform this review; completing
-every prediction/export feature is not a technical prerequisite to training.
+**16 October 2026. Tutor check-off: not completed, as confirmed by the student.**
+This written review is ready for the required practical discussion. The course
+requires it before extensive computing; preparing this draft does not complete
+the hurdle. The next budget below is proposed, not tutor-approved or submitted.
 
-**User need and scope.** This MRI contour-drafting prototype is for imaging
-researchers and specialist reviewers. The question is whether 3D context improves
-prostate terminal-slice and adjacent-organ boundaries enough to justify its cost
-over 2D U-Net. Outputs require human review; this coursework cannot establish
-clinical suitability or reduced contouring time.
+**User need and scope.** Imaging researchers and specialist reviewers need
+MRI contour drafts with visible errors. This prototype asks whether 3D context
+improves prostate terminal regions enough to justify its cost over 2D U-Net.
+Contours require human review; clinical suitability and time savings are unproven.
 
-**Proposed acceptance criteria, to fix before held-out evaluation:**
+**Five proposed acceptance criteria, fixed before held-out evaluation:**
 
-1. Preserve the patient-disjoint 28/5/5-patient split (173/19/19 scans), validate
-   every training/validation input, and retain configuration, hashes and checkpoints.
-2. Target case-mean prostate Dice of at least 0.70 on held-out test data. Report
-   Dice/IoU and valid counts for every foreground class on a declared common
-   factor-2 grid. Select checkpoints using validation loss only.
-3. Compare against an implemented 2D U-Net on the same split/grid. Measure prostate
-   Dice over each end's 20% of prostate-bearing axial slices as a boundary proxy;
-   report adjacent-organ overlap errors and whether 3D improves the trade-off.
-   Fix slice rounding, empty-label rules and weighting before test evaluation.
-   These proxies do not establish clinical boundary safety.
-4. Target at most 4 GiB peak allocated GPU tensor memory and two-second median
-   forward-pass inference per prepared case on one A100. Measure synchronized,
-   warmed-up inference and report loading/preprocessing separately. These are
-   proposed limits, not measured guarantees.
-5. Inspect 3-5 representative failures with image, ground truth, prediction and
-   false-positive/false-negative panels, including terminal slices and disconnected
-   predictions. Report individual cases and patient-level summaries.
+1. Keep the patient-disjoint 28/5/5-patient split (173/19/19 scans), validate
+   training/validation inputs, and retain configurations, hashes and checkpoints.
+2. Target held-out case-mean prostate Dice of at least 0.70 on the common factor-2
+   grid. Report all foreground Dice/IoU, valid counts and patient-macro summaries;
+   select checkpoints by minimum validation loss, with the earliest tie.
+3. Compare both models on the same split/grid, including the fixed first/last
+   20% of prostate-bearing source-K planes and adjacent-class confusion. State
+   whether 3D improves the quality/cost trade-off; source-K ends are not anatomical
+   base/apex labels or proof of boundary safety.
+4. Use at most 4 GiB peak allocated GPU tensor memory and a two-second
+   cohort-median forward time per prepared case on one A100. Measure warmed,
+   synchronized forwards and report loading/preprocessing separately.
+5. Include 3-5 failure autopsies with image, label, prediction and FP/FN panels,
+   covering terminal errors and disconnected predictions, then give a scoped
+   engineering recommendation with remaining limitations.
 
-**Model and course concepts.** The proposed Hard-difficulty 3D Improved U-Net uses
-residual blocks, skip connections and summed multiscale supervision, informed by
-Isensee et al. It applies convolutional spatial context, normalization,
-gradient-based optimization, cross entropy and Dice objectives. Starting settings
-are factor-2 volumes, channels 16/32/64/128, dropout 0.3, batch one and Adam 0.001;
-they have not been optimized through comparisons.
+**Model and course concepts.** The Hard-difficulty 3D Improved U-Net combines
+residual blocks, skip connections and summed multiscale supervision. It applies
+convolutional context, normalization and gradient optimization with cross entropy
+plus foreground soft Dice. Both models use channels 16/32/64/128, batch one,
+Adam 0.001 and seed 3710. The 3D model uses dropout 0.3; the plain 2D baseline
+has different capacity and blocks, so this comparison cannot isolate 3D context.
 
-**Preliminary evidence.** All 211 pairs have audited geometry and a frozen split;
-all 192 training/validation volumes passed preprocessing checks. The initial 68
-synthetic checks and an exact small CUDA continuation check passed; the expanded
-local suite now passes all 107 tests, including 2D and prediction diagnostics.
-A two-epoch
-full-split A100 pilot took 10 minutes 52 seconds, peaking at 2.26 GiB allocated
-tensor memory. Prostate validation Dice rose from 0.4693 to 0.5243; bladder Dice
-fell from 0.7563 to 0.7152. These are preliminary case-weighted validation scores,
-not evidence of reaching the test target. A subsequent two-epoch 2D full-split
-pilot completed on 16 October, with zero prostate/rectum validation Dice and
-1.56 GiB peak allocated GPU tensor memory. Both pilots have now continued to
-four epochs: 2D prostate/rectum overlap became positive in every validation
-scan, and 3D case-mean prostate Dice reached 0.6851. These remain short-training
-validation results from five patients. Longer comparison experiments and
-comparable GPU inference timing remain pending.
+**Preliminary evidence.** Geometry and pairing were audited for all 211 scans;
+all 192 training/validation volumes passed preprocessing. The local suite passes
+131 tests. Both models completed four epochs (692 updates each). Prostate
+validation Dice is 0.6611/0.6851 for 2D/3D by scan mean and 0.5568/0.6793 by
+patient mean. CPU terminal-union Dice is 0.6266/0.6462; 3D improves 8/19 scans
+but produces more false positives. These diagnostics retain small CPU/CUDA
+metric differences. The matched A100 benchmark measured 13.36/49.96 ms median
+forward time and 445.89/565.98 MiB peak allocated memory, excluding preparation
+and postprocessing. Both meet the proposed resource limits on this validation
+grid; two 2D blocks show variable per-case timing. Five validation patients,
+one seed and four epochs do not establish convergence or held-out quality.
 
-**Risks, budget and fallback.** Risks include class imbalance, lost small regions
-after downsampling, variable spacing, only five independent validation patients
-and GPU queues. The pilot stayed within its 30-minute GPU cap. Validation
-predictions have been inspected and the 2D training pipeline now passes a small
-CPU diagnostic. Choose a longer comparison budget after tutor consultation.
-Complete tutor check-off before extensive experiments.
-Fallbacks are a standard 2D baseline or narrower 3D channels; any resolution
-change requires renewed boundary checks.
+**Risks, next experiment and fallback.** Risks are class imbalance, downsampling
+of small structures, correlated scans, architecture confounds and GPU queues.
+Discuss a fixed continuation from epoch 4 to 8 for each model, restoring
+model/Adam/RNG and changing no other settings. Recent epochs imply about
+22/23 minutes for 2D/3D, with separate 30-minute caps (60 GPU-minutes total);
+queue time and later evaluation are extra. Stop at epoch 8 or failure/time cap,
+without automatic extension. Report both validation-selected and epoch-8 results
+before choosing the final protocol. Complete tutor check-off before extensive
+experiments and freeze evaluation rules before opening held-out test voxels.
+If resources fail, retain the 2D baseline; a narrower 3D model would be a separate,
+newly declared experiment. Keep failed runs and original epoch-4 controls.
 
 ## Code structure
 
@@ -151,6 +149,9 @@ change requires renewed boundary checks.
 | `checkpoint.py` | Save and restore training state | Epoch-boundary model/optimizer/configuration/progress and RNG persistence |
 | `predict.py` | Inspecting 2D/3D checkpoints on validation scans | Architecture/source binding, prepared-grid prediction, six-class voxel counts/confusion, saved-metric comparison and limited inference timing; held-out testing pending |
 | `prediction_panels.py` | Rendering private prediction diagnostics | Fixed ground-truth slice selection with prostate/bladder errors and optional rectum plane/error column |
+| `terminal_regions.py` | Prostate terminal-region diagnostics | Fixed source-K terminal fifths, whole-plane errors, outside-target FP and separate scan/patient summaries |
+| `benchmark_gpu.py` | Frozen-checkpoint GPU benchmark entry | Full-validation/source binding, explicit precision policy, device telemetry and private per-case results |
+| `benchmark_inference.py` | Forward timing and memory measurement | Warmed synchronized wall/event timing, forward-only allocated peaks and case/patient summaries |
 | `tests/` | Synthetic checks using standard-library `unittest` | Model, objective, data preparation, epoch functions, checkpoints and end-to-end runner tests |
 
 This README will develop into the final technical report. Training and validation
@@ -300,8 +301,8 @@ case/depth ordering, every-case optimizer updates, held-out voxel isolation,
 whole-volume overlap, exact CPU continuation, configuration/architecture
 mismatches and recovery after an interrupted epoch publication. They passed
 together locally. Both models now have four-epoch full-split pilots and recorded
-training-memory peaks. Longer comparison training, matched A100 inference
-measurements and held-out testing are pending. Fix the formal comparison budget and report
+training-memory peaks. Matched A100 inference measurements are recorded below;
+longer comparison training and held-out testing are pending. Fix the formal comparison budget and report
 patient-level summaries alongside case means before drawing comparative claims;
 complete the tutor feasibility check-off before extensive experiments.
 
@@ -472,8 +473,21 @@ patient-macro Dice is **0.7429 and 0.7726**, respectively. The two patients with
 eight scans each contribute 16/19 scan weight but only 2/5 patient weight.
 3D has higher mean prostate Dice in four of five patients; 2D is higher in the
 other patient. These are descriptive comparisons from five patients, with
-architectural confounds and only one seed. No final model superiority claim,
-held-out result or matched GPU inference benchmark follows from them.
+architectural confounds and only one seed. No final model superiority claim or held-out result follows from these
+accuracy scores. The separate matched GPU benchmark is reported below.
+
+The following four-epoch curves use the saved CUDA run histories. Their losses
+and Dice weight scans equally; patient-macro endpoint scores are reported above.
+Both runs select epoch 4 by validation loss. These four points are preliminary
+learning evidence and do not establish convergence.
+
+**2D U-Net, epochs 1-4:**
+
+![2D four-epoch training and validation curves](figures/epoch4-2d-learning.png)
+
+**3D Improved U-Net, epochs 1-4:**
+
+![3D four-epoch training and validation curves](figures/epoch4-3d-learning.png)
 
 ### Paired epoch-4 error inspection
 
@@ -539,12 +553,223 @@ absolute CPU/CUDA score differences were **0.000931501 for 2D** and
 match flags remain false. Saved CUDA metrics above remain the reported scores.
 This CPU inspection performed no training updates or held-out voxel reads.
 
-The next measurement should fix and implement the terminal-region definition
-and aggregation rules, then apply them to both frozen checkpoints on validation
-data. The six selected panels already show missed ends and adjacent-class
-confusion, but do not establish cohort-wide terminal-region scores. These
-opposing FP/FN patterns do not yet justify a shared threshold or loss change.
-Keep the existing checkpoints as controls before any single-variable experiment.
+The six selected panels motivated a fixed terminal-region measurement, reported
+next. Their opposing FP/FN patterns alone did not justify a shared threshold
+or loss change. The existing checkpoints remain controls.
+
+### Fixed terminal-region validation diagnostic
+
+The measurement protocol was fixed before this run, after the preceding panel
+inspection. For each case, each end contains the first/last `ceil(n/5)` of its
+`n` prostate-bearing source-K planes; the terminal union deduplicates overlap.
+Every selected plane contributes its complete H/W slab. The remaining occupied
+planes form an interior region, and every GT-empty plane forms an outside region.
+These are prepared-grid proxies, not anatomical base/apex labels or equal
+physical thicknesses. The exact empty-score and aggregation rules are documented
+under Validation prediction inspection.
+
+CPU job `664466` completed on `r730-0` in **2 minutes 11 seconds**, from
+03:53:05 to 03:55:16 Brisbane time on 16 October 2026, with four cores and a
+15-minute cap (`COMPLETED`, exit `0:0`). Both unchanged epoch-4 checkpoints
+were evaluated on all 19 validation scans. An earlier attempt, `664459`, failed
+at startup because the private driver filename shadowed Python's `inspect`
+module. It read no case data; its nine collected artifacts remain preserved.
+The successful retry renamed that driver and kept the measurement protocol
+and model code unchanged.
+
+The following are **CPU diagnostic Dice scores**, distinct from the saved CUDA
+scores above. Every entry uses 19 valid scans and five valid patients. A patient
+mean averages that patient's scan scores; patient macro then weights those five
+means equally. Region Dice is computed from its combined voxels, not by averaging
+individual plane Dice or the two ends' scores.
+
+| Region | 2D scan mean | 3D scan mean | 2D patient macro | 3D patient macro |
+| --- | ---: | ---: | ---: | ---: |
+| Whole volume | 0.6611 | 0.6851 | 0.5570 | 0.6793 |
+| Lower-index terminal | 0.5223 | 0.5571 | 0.5234 | 0.5629 |
+| Upper-index terminal | 0.6125 | 0.6467 | 0.4331 | 0.6414 |
+| Terminal union | 0.6266 | 0.6462 | 0.5306 | 0.6503 |
+| Occupied interior | 0.7461 | 0.8001 | 0.6001 | 0.7757 |
+
+Both models have lower terminal-union than interior Dice under both aggregations.
+3D has higher terminal-union Dice in **8/19 scans and 3/5 patient means**;
+2D is higher in the other 11 scans and two patients. Thus the higher mean does
+not imply improvement in most scans. In particular, the patient represented by
+example 5 improves from terminal Dice 0 to 0.6146, whereas example 4 declines
+from 0.7698 to 0.7164 despite its higher 3D whole-volume Dice. Repeated scans and
+uneven improvements affect the two averages differently. Example 5 alone
+contributes +0.1229 to the patient-macro difference of +0.1198; the other four
+patients' contributions sum to a slight negative difference. The aggregate
+advantage is therefore sensitive to one patient's large recovery. Terminal
+Dice is below interior Dice in 18/19 scans for 2D and all 19 for 3D.
+
+Pooling terminal-union voxels over all scans makes the FP/FN trade-off explicit:
+
+| Model | Target | Predicted | TP | FP | FN | Pooled precision | Pooled recall |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2D | 4,090 | 2,983 | 2,330 | 653 | 1,760 | 0.7811 | 0.5697 |
+| 3D | 4,090 | 5,125 | 3,015 | 2,110 | 1,075 | 0.5883 | 0.7372 |
+
+These pooled ratios are separate from mean scores. The 2D terminal union is
+entirely unpredicted in one scan: its Dice/recall are zero but precision is
+undefined. Terminal precision therefore has 18 valid scans/four patients for
+2D versus 19/five for 3D; means of precision should not be treated as a fully
+paired comparison without respecting these supports.
+
+GT-empty planes contain **1,283 extra prostate voxels for 2D and 2,208 for 3D**.
+Each model has such FP in 16/19 scans, with three double-empty outside regions;
+the affected scans are not identical. Below/above the occupied extent, the FP
+counts are 569/714 for 2D and 163/2,045 for 3D. No scan has an internal GT gap;
+that subgroup has no planes and undefined scores, not perfect segmentation.
+Outside-region Dice is zero when predictions exist and undefined otherwise, so
+its mean is not a useful measure of this error burden. Outside FP remains part
+of whole-volume Dice and is reported alongside terminal-region scores.
+
+All 16 successful-run artifacts passed SHA-256 checks. Independent recalculation
+verified counts, scores, validity supports, scan means and patient means. Every
+whole-volume confusion matrix exactly matches the previous CPU diagnostic;
+terminal/interior/outside counts reconstruct it. The two retained example-4
+panels are byte-identical to the previously reviewed pair. The maximum CPU/CUDA
+score differences remain 0.000931501 / 0.000311375, with strict-match flags
+false. No training updates or held-out voxel reads occurred.
+
+The evidence supports a remaining terminal-coverage problem and a recall/FP
+trade-off in these checkpoints. It does not isolate the effect of 3D context
+from architecture, establish convergence or justify a final superiority claim.
+Keep this protocol and the checkpoints fixed for subsequent comparisons. The
+matched GPU inference-cost measurement follows below; tutor feasibility
+consultation remains outstanding before a larger experiment.
+
+### Matched epoch-4 A100 cost comparison
+
+GPU job `664505` completed on `a100-7` in **3 minutes 20 seconds**, from
+04:15:12 to 04:18:32 Brisbane time on 16 October 2026 (`COMPLETED`, exit `0:0`).
+One A100-PCIE-40GB and one Slurm CPU core were allocated. All four fresh-process
+blocks used the same GPU UUID: 2D, 3D, 3D, 2D. Each block evaluated all 19
+validation scans, with five warmups and ten measured forwards per scan: **380
+warmups and 760 measured forwards** in total. All prepared volumes had shape
+`[D,H,W] = [64,128,128]`. Model/input float32 tensors, TF32 disabled, evaluation
+mode and the strict deterministic policy were common to both models. The full
+protocol and reproduction command are documented under Matched GPU inference
+benchmark.
+
+The primary time below is the median across 19 case medians; each case median
+uses its 20 measured forwards across the two blocks. The memory value is the
+maximum absolute forward allocated peak over every repeat, case and block.
+Both exclude data preparation and postprocessing; memory includes model/input
+tensors and forward activations/output.
+
+| Model | Parameters | Cohort-median forward time | Case-mean forward time | Patient-macro forward time | Slowest case median | Peak allocated |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2D | 482,422 | 13.36 ms | 15.05 ms | 13.95 ms | 21.11 ms | 445.89 MiB (0.435 GiB) |
+| 3D | 2,349,986 | 49.96 ms | 49.89 ms | 49.84 ms | 50.07 ms | 565.98 MiB (0.553 GiB) |
+
+Under this protocol, 3D takes **3.74 times** the cohort-median forward time and
+**1.27 times** the peak allocated memory. The median of the 19 paired per-case
+time ratios is 3.72, a separately defined statistic. Both satisfy the proposed
+two-second cohort-median forward limit and 4 GiB allocated-memory limit on this
+validation grid; no case median exceeds two seconds. This establishes resource
+feasibility for these implementations and settings, not the segmentation-quality
+target or a final choice of model. Architecture and parameter-count differences
+remain confounded with the use of 3D context.
+
+The two 2D block cohort medians were 13.83 and 13.21 ms; 3D's were 49.76 and
+50.01 ms. These aggregate values conceal some 2D variability: one scan's block
+medians were 20.66 and 12.74 ms, a 62.2% difference relative to the faster value.
+The combined 2D case medians span 12.73-21.11 ms, versus 49.63-50.07 ms for 3D.
+No specific cause of that variation is established by the recorded telemetry.
+CUDA-event cohort medians were 13.32 and 49.92 ms for 2D and 3D.
+Reserved allocator peaks were 600 and 774 MiB, respectively; these include
+cache and are not the absolute allocated tensor figures above. Mean loading
+and preprocessing took **1.68-1.76 seconds per scan across the four blocks**;
+mean transfer took 0.56-0.59 ms. These ancillary observations depend on filesystem
+cache and host conditions and do not constitute a cold-start or end-to-end
+deployment benchmark.
+
+The environment was Python 3.11.15, PyTorch 2.13.0+cu130, CUDA runtime 13.0,
+cuDNN 9.20.0 and driver 590.48.01. PyTorch intra-op threads were set to one;
+the recorded inter-op setting was eight. Before/after snapshots showed no other
+compute process on the selected GPU. Clocks were not locked: sampled SM clocks
+ranged from 765 to 1,410 MHz and temperatures from 30 to 48 degrees C. ABBA
+ordering and repeated warmups reduce some order effects, but a single shared-node
+allocation and point-in-time telemetry cannot establish performance on other
+devices or guarantee complete isolation.
+
+All 18 successful-run artifacts passed SHA-256 checks, and independent local
+recalculation reproduced all time and memory summaries. Prepared input/target
+hashes and geometry match across all four blocks. Each model's two blocks have
+identical prediction hashes and confusion matrices; these matrices also match
+the prior CPU diagnostic. Source and checkpoint hashes remain unchanged. The
+largest difference from saved CUDA Dice/IoU is 0.000931501 for 2D and 0.000311375
+for 3D, below the predeclared 0.005 diagnostic bound; strict-match flags remain
+false. Original saved CUDA scores remain the reported accuracy results.
+
+The earlier GPU attempt `664500` stopped at device verification because PyTorch
+returned a bare UUID while `nvidia-smi` added `GPU-`. It timed no case and its
+12 artifacts were preserved. UUID normalization and a regression test fixed
+that compatibility issue without changing the benchmark protocol. Successful
+and failed records remain private; this step performed no training updates or
+held-out voxel reads.
+
+### Next comparison budget - proposed, not submitted
+
+On 16 October 2026, the next protocol was written before further training.
+The feasibility check-off remains outstanding. This is a proposal for the tutor
+discussion, with no new Slurm job or claimed epoch-8 result.
+
+The question is whether a larger common training budget under the existing
+recipe changes overall and terminal prostate overlap and the FP/FN trade-off.
+Both models' validation losses are still falling. In particular, 2D only acquired
+positive prostate/rectum overlap at epoch 4; its earlier zeros do not justify
+changing several training choices simultaneously.
+
+| Model | Starting point | Proposed added epochs | Expected epoch time total | Job time cap |
+| --- | --- | ---: | ---: | ---: |
+| 2D | Preserved epoch-4 model, Adam and RNG state | 4, ending at 8 | 21.9 min | 30 min |
+| 3D | Preserved epoch-4 model, Adam and RNG state | 4, ending at 8 | 22.6 min | 30 min |
+
+The estimates double the sum of measured epoch-3 and epoch-4 times, including
+training and validation but excluding startup/checkpoint overhead and queue time.
+The two jobs would run sequentially, each on one A100 and one CPU core, for a
+combined allocation cap of **60 GPU-minutes**. Later prediction inspection and
+resource remeasurement need their own declared budgets. Availability and runtime
+are estimates; the time caps are hard limits, not a promise of completion.
+
+**Fixed settings and restoration.** Copy the complete epoch-4 run state and its
+referenced checkpoints into new directories, preserving the original runs.
+Verify source, checkpoint, run, manifest and split hashes before resuming and
+retain epochs 1-4 exactly. Restore model, Adam and RNG. Keep the 28/5/5 patients,
+factor-2 preprocessing, channels, architecture-specific dropout/supervision,
+whole-case cross-entropy plus soft Dice, Adam 0.001, seed 3710, epoch shuffling,
+173/19 training/validation scans, batch one and the recorded deterministic CUDA
+environment unchanged. Do not add augmentation, class weights, a scheduler or
+postprocessing. The benchmark's TF32-off override is a measurement policy; it
+must not silently replace the original training precision policy.
+
+**Stopping and selection.** Stop at total epoch 8: 1,384 Adam updates per
+parameter if completed. Abort and preserve records on a nonfinite value,
+out-of-memory error, source/input mismatch or time cap; do not automatically
+resubmit or add epochs. Keep the minimum-validation-loss checkpoint over epochs
+1-8, choosing the earliest tie, and also report the fixed epoch-8 endpoint.
+Do not present unequal completed epochs as a matched endpoint. A decreasing loss
+at epoch 8 would still not demonstrate convergence or authorize an automatic
+extension.
+
+**Evaluation rules.** Report all foreground classes on all 19 validation scans
+and aggregate within each of the five patients before the patient-macro average.
+Repeat the existing terminal-fifth/outside-target counts, Dice/IoU and valid-count
+rules. Inspect the same six paired examples for continuity, while using all cases
+for numerical conclusions. Do not tune the loss around one difficult case or
+choose new slices to favor a model. Distinguish diagnostic CPU metrics from the
+saved CUDA scores, and preserve discrepancy checks. Selected and fixed-endpoint
+results must be identified separately if the selected epoch differs from eight.
+
+The held-out test set remains unopened during this continuation. Freeze the
+model-selection, preprocessing, metric and postprocessing rules before its final
+evaluation; do not use test results for another tuning cycle. Validation scores
+near the 0.70 target are not a reason to inspect test data early. The private
+plan binds the exact epoch-4 hashes and requires saving Slurm submission/status,
+stdout/stderr, environment, run history, checkpoints and collected-artifact hashes.
 
 ## Dice loss and overlap metrics
 
@@ -1033,6 +1258,40 @@ background and cover the complete prepared grid. They distinguish a zero Dice
 caused by no class predictions from zero-overlap predictions placed elsewhere;
 neither by itself establishes the training failure's underlying cause.
 
+Add `--terminal-regions` to the same command to measure prostate errors in fixed
+depth regions. This optional flag uses the existing prediction mask, adds no
+forward pass and leaves the training objective and checkpoint untouched. It
+adds each case's `terminal_regions`, the top-level `terminal_region_protocol`
+and `terminal_region_summary`, and the diagnostic module's source hash to
+`prediction.json`. The flag is off by default.
+
+The versioned protocol in `terminal_regions.py` uses label 5. Sort the source-K
+depths containing prostate ground truth; for `n` such planes, each terminal
+region contains `ceil(n/5)` planes. The lower/upper names refer to array indices,
+not anatomical base/apex. The terminal union deduplicates overlap, including
+the single-occupied-plane case. All remaining occupied planes form the interior.
+Every selected plane contributes its entire H/W slab, so false positives outside
+the target outline remain counted. GT-empty planes form a separate outside
+region, divided into below-extent, above-extent and internal-gap subgroups when
+the target has a defined extent. With no GT, the terminal/interior/extent
+subgroups are empty and the outside region contains every plane.
+
+Each region records its depths, TP/FP/FN and target/predicted counts, plus
+unsmoothed Dice, IoU, precision and recall. A zero denominator gives JSON `null`
+and `valid=false` for that metric: an empty prediction on nonempty GT has zero
+Dice/recall but undefined precision; double-empty masks have undefined scores.
+GT-empty planes with predictions have zero Dice/IoU and positive FP. Interpret
+outside-target errors primarily through FP counts and the number of affected
+scans. The terminal union, occupied interior and outside region partition all
+planes and their counts must reconstruct the whole volume.
+
+The summary separately reports mean defined scan scores and equal-weight
+patient means, first averaging the defined scans within each patient. Every
+metric retains valid scan/patient counts; empty-target, empty-prediction and
+positive-FP scan counts are also explicit. Pooled voxel counts are separate
+from both mean-score aggregations. This convention measures a fixed validation
+proxy, not anatomical endpoint accuracy or regions of equal physical thickness.
+
 Each private PNG contains MRI, ground-truth overlay, prediction overlay,
 prostate errors and bladder errors. Error colors are green for true positives,
 magenta for false positives and cyan for false negatives. The Body/background
@@ -1084,7 +1343,94 @@ The 2D/count extension adds eight tests for real 2D checkpoint prediction,
 hand-computed confusion counts, absent/disjoint class predictions, data/source
 binding, architecture rejection and selective rendering. One additional panel
 test checks rectum plane selection, errors and all six columns' orientation.
-All 22 current prediction/panel tests pass locally and on Rangpur.
+Those 22 prediction/panel tests passed locally and on Rangpur. The terminal-region
+extension adds eight hand-counted protocol/aggregation tests and two prediction
+integration tests, covering rounding, overlap, sparse gaps, outside FP, nulls,
+patient weighting, corrupted records and the optional flag's source binding:
+
+```bash
+python -s -m unittest tests.test_terminal_regions tests.test_predict_terminal_regions -v
+```
+
+All ten new tests and the full 117-test suite passed locally. This synthetic
+verification is separate from the real validation diagnostic reported above.
+
+## Matched GPU inference benchmark
+
+`benchmark_gpu.py` measures one frozen checkpoint on the complete validation
+cohort in its original split order. It requires explicit run/checkpoint hashes,
+unchanged training sources and frozen data metadata; it rejects partial,
+reordered, training or test selections before reading image voxels. Outputs
+must use a new private directory. Allocate one CUDA GPU before running:
+
+```bash
+python -s benchmark_gpu.py \
+  --run-dir /path/to/completed/training-run \
+  --run-json-sha256 SAVED_RUN_JSON_SHA256 \
+  --checkpoint-sha256 SAVED_BEST_CHECKPOINT_SHA256 \
+  --manifest /path/to/original/manifest.json \
+  --split /path/to/original/split.json \
+  --case-ids ALL_VALIDATION_IDS_IN_FROZEN_ORDER \
+  --warmups 5 --repeats 10 --threads 1 \
+  --output-dir private/gpu-benchmark-block
+```
+
+Replace the placeholders using the preserved records. Run each model/block in
+a fresh process on the same allocated GPU. The fixed comparison uses block
+order **2D, 3D, 3D, 2D**, all 19 validation scans in each block, five warmups and
+ten measured forwards per scan/block. Inputs and weights are float32, TF32 is
+explicitly disabled for both matrix multiplication and cuDNN, and AMP/compilation
+are disabled. Models use evaluation/inference mode and the saved strict
+deterministic policy with cuDNN benchmarking disabled. This precision policy
+is explicit for the benchmark; it is not a claim that all earlier training
+precision defaults were identical.
+
+Each input is one complete factor-2 prepared volume. The unchanged 2D wrapper
+batches all its depth slices at once, then reconstructs the volume logits;
+it does not process a single slice per timed call. Neither model uses chunking,
+test-time augmentation or sliding-window inference. Loading/preprocessing and
+CPU-to-GPU transfer are timed separately. Per-case prepared image/target hashes,
+geometry, prediction hashes and confusion counts support paired checks.
+
+`benchmark_inference.py` preinitializes CUDA events outside the measured window.
+It synchronizes before and after each forward and retains both host-wall
+`perf_counter` durations and CUDA-event durations. The primary wall measurement
+includes Python dispatch, event recording and final synchronization. Loading,
+preprocessing, transfer, output finite checks, argmax, metrics and rendering are
+excluded. These are forward-only times, not end-to-end contouring latency.
+
+Each repeat discards the previous output, records the live model/input baseline,
+resets memory peaks, executes forward and reads the peaks **before** any finite
+check or argmax. Absolute allocated peaks include the model, input, intermediate
+activations and output; they are used for the 4 GiB target. Incremental peaks
+subtract the corresponding baseline and are auxiliary. Reserved memory includes
+the warmed allocator cache and is also reported separately; neither measure is
+total device usage including CUDA context and other non-PyTorch allocations.
+No cache clearing occurs within the measurement loop.
+
+For each model/case, concatenate the two blocks' ten measurements and take the
+median of those 20 durations. The primary cohort latency is the median of the
+19 case medians; also retain the case mean, equal-weight patient mean, slowest
+case median and number exceeding two seconds. The memory limit uses the maximum
+absolute allocated peak over every repeat/case/block. Per-block summaries expose
+variation; repeats and blocks are not independent patients or independent GPUs,
+so no confidence interval is inferred from them.
+
+Private JSON records the GPU UUID, driver, library versions, precision and
+determinism settings, before/after device telemetry, selected-GPU compute
+processes, raw durations and per-repeat memory. UUID matching normalizes the
+optional `GPU-` prefix used by `nvidia-smi`; it never substitutes an ordinal.
+Visible foreign compute processes cause a failure/review. Point-in-time checks
+and a shared node do not prove absence of contention throughout the allocation.
+The paired execution additionally checks matching GPU/configuration/input
+hashes, identical predictions between each model's two blocks, unchanged source
+and checkpoint hashes, and the predeclared 0.005 saved-metric diagnostic bound.
+
+Fourteen synthetic tests cover input isolation, UUID/process filtering, event
+initialization, output lifetime, timing/memory boundaries, nonfinite outputs and
+case/patient aggregation. Mock CUDA tests verify execution order rather than GPU
+performance. The full **131-test local suite passes**; actual measurements are
+recorded separately from these tests.
 
 ## Checkpoint save and restore
 
@@ -1438,8 +1784,9 @@ record. The original CUDA metrics above remain the pilot's reported results.
 
 Each CPU case had one warmup and one measured forward pass (1.331-1.353 seconds).
 This limited timing excludes loading/preprocessing/transfers/postprocessing and
-is not an A100 inference benchmark. GPU inference-time acceptance remains
-unmeasured. The CPU run has no CUDA memory measurement.
+is not an A100 inference benchmark. That CPU run did not measure GPU inference
+acceptance or CUDA memory; the later matched A100 cost comparison provides those
+measurements separately.
 
 All 18 downloaded artifacts were verified against the archive/file SHA-256
 records. PNGs, case-level JSON and logs remain private. No test voxels were
@@ -1533,6 +1880,23 @@ documented under/over-segmentation, adjacent-class confusion and terminal-plane
 failures, preserving the original CUDA scores and CPU discrepancy flags.
 The predictions and weights were not changed based on the inspection, and no
 additional training or held-out evaluation was performed in that diagnostic.
+Codex then implemented the fixed source-K terminal-fifth metric, case/patient
+aggregation and optional prediction flag, with ten new tests (117 total passing
+locally). It preserved a failed CPU startup attempt, corrected the private
+driver's standard-library name collision, and completed the 19-scan paired
+terminal diagnosis. It checked all 16 successful-run artifacts, independently
+recomputed the summaries, verified exact agreement with prior CPU confusion
+counts and documented the mixed per-scan improvements and FP/FN trade-off.
+Codex implemented the separate GPU benchmark kernel and checkpoint-bound entry,
+with fourteen new tests and 131 passing local tests in total. It fixed an observed
+PyTorch/nvidia-smi UUID-format incompatibility, preserving the failed attempt,
+then ran the four-block same-A100 comparison. It archived and verified all 18
+successful-run artifacts, independently recomputed raw-time and memory summaries,
+and documented the measurement scope, GPU telemetry and compute/quality trade-off.
+Codex refreshed the one-page feasibility draft using the four-epoch and A100
+evidence, exported both four-epoch learning curves, and prepared a hash-bound
+epoch-8 continuation proposal with fixed budgets and stopping rules. This
+planning step did not submit a job, complete tutor check-off or evaluate test data.
 The checks exercise
 feature/logit shapes, gradients through the model, independent skip and scale
 contributions, coarse-to-fine output summation, state restoration, input-size

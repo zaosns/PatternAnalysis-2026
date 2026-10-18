@@ -272,6 +272,9 @@ def _run_locked(args, run_dir):
     model, checkpoint_hash = load_best_model(run_dir, state, device=args.device,
                                               expected_sha256=args.checkpoint_sha256)
     from prediction_panels import render_case_panels
+    terminal_enabled = getattr(args, 'terminal_regions', False)
+    if terminal_enabled:
+        from terminal_regions import PROTOCOL, terminal_region_metrics, summarize_terminal_regions
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=False)
     report = dict(format_version=1, status='started', partition='validation', model_kind=model_kind,
@@ -285,6 +288,9 @@ def _run_locked(args, run_dir):
         environment=dict(python=platform.python_version(), torch=str(torch.__version__),
             cuda_runtime=torch.version.cuda, device=args.device, threads=args.threads,
             device_name=torch.cuda.get_device_name(0) if args.device == 'cuda' else 'cpu'))
+    if terminal_enabled:
+        report['terminal_region_protocol'] = PROTOCOL
+        report['source_sha256']['terminal_regions.py'] = sha256(source / 'terminal_regions.py')
     _atomic_json(output / 'prediction.json', report)
     try:
         for index, case in enumerate(selected):
@@ -305,17 +311,22 @@ def _run_locked(args, run_dir):
                     metrics=metrics, **panel_options)
                 figure_hash = sha256(output / name)
             comparison = metric_comparison(metrics, reference, reference['case_ids'].index(case.case_id))
-            report['cases'].append(dict(case_id=case.case_id, patient_id=case.patient_id,
+            row = dict(case_id=case.case_id, patient_id=case.patient_id,
                 shape_dhw=list(prepared.target.shape), spatial_unit=prepared.spatial_unit,
                 affine_dhw=prepared.affine_dhw.tolist(), metrics=metrics, timing=timing,
                 loading_preprocessing_seconds=loading_seconds, saved_metric_comparison=comparison,
-                panel=panel, figure=name, figure_sha256=figure_hash))
+                panel=panel, figure=name, figure_sha256=figure_hash)
+            if terminal_enabled:
+                row['terminal_regions'] = terminal_region_metrics(prediction, prepared.target)
+            report['cases'].append(row)
             _atomic_json(output / 'prediction.json', report)
             print(json.dumps(dict(example=index + 1, metric_match=comparison['matches'],
                                   prostate_dice=metrics['dice'][4])), flush=True)
             del prepared, prediction
         if sha256(run_path) != run_hash or sha256(run_dir / state['best_checkpoint']) != checkpoint_hash:
             raise ValueError('Training run or checkpoint changed during inspection.')
+        if terminal_enabled:
+            report['terminal_region_summary'] = summarize_terminal_regions(report['cases'])
         report['status'] = 'completed'
         report['all_saved_metrics_match'] = all(row['saved_metric_comparison']['matches'] for row in report['cases'])
     except Exception as error:
@@ -336,6 +347,9 @@ def build_parser():
                         help='Unique subset of case IDs to render; default renders every selected case.')
     parser.add_argument('--include-rectum-panels', action='store_true',
                         help='Include additional rectum-focused diagnostic views in rendered panels.')
+    parser.add_argument('--terminal-regions', action='store_true',
+                        help='Measure prostate errors on the first/last 20%% of target-bearing source-K planes, '
+                             'including case and patient summaries. This is not anatomical base/apex identification.')
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--checkpoint-sha256', help='Optional expected best-checkpoint digest from preserved records.')
     parser.add_argument('--device', choices=('cpu', 'cuda'), default='cpu')
