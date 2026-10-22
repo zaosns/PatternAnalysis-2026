@@ -383,7 +383,7 @@ do not establish real-data accuracy or clinical suitability.
 
 **Project aim.** My project tests whether a 3D Improved U-Net improves prostate segmentation at difficult end regions compared with a 2D U-Net, and whether better results are worth the extra computing cost. The output is a draft organ outline for a person to check.
 
-**Method and course concepts.** The main model is a 3D Improved U-Net: 3D residual units, encoder-decoder skip connections and deep supervision that adds predictions from different scales. Course concepts include convolutions, normalization and gradient-based learning. For both models, data preparation halves the depth, height and width (downsampling factor: 2). Encoder feature channels by level: 16, 32, 64, 128; batch size: 1 MRI volume; Adam learning rate: 0.001; random seed: 3710; loss: equal-weight cross entropy plus foreground Dice. The 3D dropout probability is 0.3. Model reference: Isensee et al., arXiv:1802.10508 (task reference [2]).
+**Method and course concepts.** Difficulty level: Hard. The main model is a 3D Improved U-Net: 3D residual units, encoder-decoder skip connections and deep supervision that adds predictions from different scales. Course concepts include convolutions, normalization and gradient-based learning. For both models, data preparation halves the depth, height and width (downsampling factor: 2). Encoder feature channels by level: 16, 32, 64, 128; batch size: 1 MRI volume; Adam learning rate: 0.001; random seed: 3710; loss: equal-weight cross entropy plus foreground Dice. The 3D dropout probability is 0.3. Model reference: Isensee et al., arXiv:1802.10508 (task reference [2]).
 
 **Success criteria:**
 
