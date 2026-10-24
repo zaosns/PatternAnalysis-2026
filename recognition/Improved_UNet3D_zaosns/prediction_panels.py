@@ -1,4 +1,4 @@
-"""Render private validation figures from already prepared CPU case volumes.
+"""Render private validation/test figures from already prepared CPU volumes.
 
 These panels retain array axes: D/H/W correspond to source K/J/I, without an
 anatomical reorientation. Planes are selected by ground-truth organ occupancy
@@ -137,6 +137,7 @@ def render_case_panels(
     case_label: str,
     metrics: dict | None = None,
     include_rectum: bool = False,
+    evaluation_split: str = "validation",
 ) -> dict:
     """Save one PNG and return JSON-safe geometry, slice and display metadata.
 
@@ -144,6 +145,8 @@ def render_case_panels(
     plus flat ``dice`` and ``iou`` lists; undefined classes use JSON null.
     ``include_rectum`` appends a rectum error column and maximum-area target
     plane, retaining the original candidates for comparison with older panels.
+    ``evaluation_split`` labels the figure and metadata as validation or test;
+    callers must enforce the corresponding frozen patient partition themselves.
     Labels are displayed with nearest interpolation. All columns share
     the same array orientation, intensity window and affine-derived pixel
     aspect ratio. Oblique/sheared volumes are not rectified: the in-plane
@@ -157,6 +160,8 @@ def render_case_panels(
         raise FileExistsError("Output already exists; choose a new prediction-panel path.")
     if type(include_rectum) is not bool:
         raise ValueError("include_rectum must be boolean.")
+    if evaluation_split not in ("validation", "test"):
+        raise ValueError("evaluation_split must be validation or test.")
     _validate(prepared, prediction_cpu, case_label, metrics)
     import matplotlib
     matplotlib.use("Agg")
@@ -188,7 +193,7 @@ def render_case_panels(
         error_lookup[code] = to_rgba(color, alpha=.85)
 
     metadata = {
-        "format_version": 1, "case_label": case_label, "evaluation_split": "validation",
+        "format_version": 1, "case_label": case_label, "evaluation_split": evaluation_split,
         "grid": "prepared", "selected_depths": depths,
         "source_depth_centres": source_depths, "target_prostate_empty": empty_prostate,
         "target_bladder_empty": not bool((prepared.target == 3).any()),
@@ -219,7 +224,9 @@ def render_case_panels(
     columns = 3 + len(error_classes)
     figure, axes = plt.subplots(len(depths), columns, figsize=(3 * columns, 3.1 * len(depths) + 2.1), squeeze=False)
     try:
-        figure.suptitle(f"{case_label} | validation on prepared grid (not test)", fontsize=16, y=.985)
+        split_title = ("validation on prepared grid (not test)" if evaluation_split == "validation"
+                       else "test on prepared grid")
+        figure.suptitle(f"{case_label} | {split_title}", fontsize=16, y=.985)
         if metrics is not None:
             def score(name, index):
                 value = metrics[name][index]

@@ -28,7 +28,7 @@ from train import _atomic_json, _validate_run_state
 
 SOURCE_FILES = ('evaluate.py', 'predict.py', 'baseline2d.py', 'modules.py',
                 'dataset.py', 'objectives.py', 'train.py', 'train_baseline2d.py',
-                'checkpoint.py', 'terminal_regions.py')
+                'checkpoint.py', 'terminal_regions.py', 'prediction_panels.py')
 POLICY = dict(selection='minimum validation loss over all completed epochs; earliest tie',
     preprocessing='unchanged training normalization and factor; prepared-grid scoring',
     prediction='float32 logits; argmax over six classes; no postprocessing',
@@ -147,6 +147,10 @@ def _inspect_inputs(plan):
     for key in ('downsample_factor', 'assume_label_units_from_image', 'reproducibility'):
         if a['config'][key] != b['config'][key]:
             raise ValueError('Paired preparation/reproducibility settings differ.')
+    no_augmentation = dict(enabled=False, policy=None)
+    if (a['config'].get('augmentation', no_augmentation)
+            != b['config'].get('augmentation', no_augmentation)):
+        raise ValueError('Paired training augmentation settings differ.')
     selected = getattr(split, plan['partition'])
     cohort = [dict(case_id=c.case_id, patient_id=c.patient_id) for c in selected]
     if not selected or cohort != plan['cohort']:
@@ -275,10 +279,18 @@ def _tensor_hash(tensor):
     return hashlib.sha256(tensor.detach().cpu().contiguous().numpy().tobytes()).hexdigest()
 
 
-def run_evaluation(args):
+def run_evaluation(args, *, required_partition=None):
+    """Evaluate the full frozen cohort; optional panels never select metric cases.
+
+    The prediction test entrypoint requires a test plan and renders the first
+    frozen case for each model unless an explicit panel subset is supplied.
+    All existing rehearsal, source, runtime and checkpoint checks still apply.
+    """
     if sha256(args.plan) != args.plan_sha256:
         raise ValueError('Plan SHA-256 does not match the supplied digest.')
     plan = _read(args.plan)
+    if required_partition is not None and plan['partition'] != required_partition:
+        raise ValueError(f'This entrypoint requires a frozen {required_partition} plan.')
     output = args.output_dir.resolve()
     if output.exists():
         raise FileExistsError('Output exists; preserve earlier results and use a new directory.')
@@ -286,6 +298,18 @@ def run_evaluation(args):
         _locks(stack, {kind: spec['run_dir'] for kind, spec in plan['models'].items()})
         states, split, cases = _inspect_inputs(plan)
         _validate_rehearsal(plan, states, split)
+        panel_case_ids = getattr(args, 'panel_case_ids', None)
+        if panel_case_ids is None:
+            panel_case_ids = [cases[0].case_id] if getattr(args, 'render_panels', False) else []
+            panel_selection = 'first case in frozen cohort order' if panel_case_ids else 'none'
+        else:
+            if (not panel_case_ids or len(panel_case_ids) != len(set(panel_case_ids))
+                    or not set(panel_case_ids).issubset({case.case_id for case in cases})):
+                raise ValueError('panel_case_ids must be a nonempty unique subset of the frozen cohort.')
+            panel_selection = 'explicit subset of frozen cohort; metrics still cover the full cohort'
+        # Rendering shares the numerical evaluator and never changes its cohort.
+        if panel_case_ids:
+            from prediction_panels import render_case_panels
         _configure(plan)
         # Validate BOTH checkpoint payloads before the first image is opened.
         models = {}
@@ -299,6 +323,7 @@ def run_evaluation(args):
             setup_fingerprint=setup_fingerprint(plan), models={}, training_updates=0,
             accuracy_role='primary_cuda' if plan['device'] == 'cuda' else 'cpu_diagnostic',
             test_voxels_read=False, terminal_protocol=PROTOCOL,
+            panel_case_ids=panel_case_ids, panel_selection=panel_selection,
             interpretation='Full frozen partition, prepared-grid accuracy. One warmup/one timed forward per case are diagnostic timing, not a new cost benchmark.',
             environment=dict(**plan['runtime_identity'], threads=plan['threads'],
                 slurm_job_id=os.environ.get('SLURM_JOB_ID'),
@@ -342,6 +367,12 @@ def run_evaluation(args):
                     if plan['partition'] == 'validation':
                         reference = state['history'][state['best_epoch'] - 1]['validation']
                         row['saved_metric_comparison'] = metric_comparison(metrics, reference, index)
+                    if case.case_id in panel_case_ids:
+                        name = f"{plan['partition']}-{kind}-{index + 1:03d}.png"
+                        panel = render_case_panels(prepared, prediction, output / name,
+                            case_label=f"{kind.upper()} example {index + 1} | best epoch {state['best_epoch']}",
+                            metrics=metrics, evaluation_split=plan['partition'])
+                        row.update(panel=panel, figure=name, figure_sha256=sha256(output / name))
                     result['cases'].append(row)
                     persist()
                     print(json.dumps(dict(model=kind, completed_cases=index+1, total_cases=len(cases))), flush=True)
@@ -399,6 +430,9 @@ def build_parser():
     run.add_argument('--plan', type=Path, required=True)
     run.add_argument('--plan-sha256', required=True)
     run.add_argument('--output-dir', type=Path, required=True)
+    run.add_argument('--panel-case-ids', nargs='+',
+                     help='Render these frozen-cohort cases for both models; metrics cover every case. '
+                          'The default does not render panels.')
     return parser
 
 

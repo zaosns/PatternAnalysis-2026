@@ -109,6 +109,34 @@ class PredictionPanelTests(unittest.TestCase):
         self.assertEqual(metadata["selected_depths"], [3])
         self.assertEqual(metadata["display_window"], {"lower": 0., "upper": 1., "method": "all-zero fallback"})
 
+    def test_figure_and_metadata_identify_the_evaluation_split(self):
+        import matplotlib.figure
+        original = matplotlib.figure.Figure.suptitle
+        titles = []
+
+        def observed(figure, title, *args, **kwargs):
+            titles.append(title)
+            return original(figure, title, *args, **kwargs)
+
+        with patch.object(matplotlib.figure.Figure, "suptitle", new=observed):
+            validation = self.render()
+            self.output.unlink()
+            test = render_case_panels(self.sample, self.sample.target, self.output,
+                                      case_label="Test example A", evaluation_split="test")
+        self.assertEqual(validation["evaluation_split"], "validation")
+        self.assertEqual(test["evaluation_split"], "test")
+        self.assertEqual(titles, ["Validation example A | validation on prepared grid (not test)",
+                                  "Test example A | test on prepared grid"])
+        self.assertEqual(test["selected_depths"], validation["selected_depths"])
+        self.assertEqual(test["panel_error_counts"], validation["panel_error_counts"])
+        self.assertEqual(self.output.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
+
+    def test_invalid_evaluation_split_does_not_create_a_panel(self):
+        for split in ("train", "Test", "", None, True):
+            with self.subTest(split=split), self.assertRaisesRegex(ValueError, "evaluation_split"):
+                self.render(evaluation_split=split)
+            self.assertFalse(self.output.exists())
+
     def test_rectum_option_adds_target_plane_and_sixth_error_column(self):
         import matplotlib.axes
         target = self.sample.target.clone()

@@ -35,6 +35,17 @@ Run CUDA commands, including CUDA evaluation-plan freezing, inside an allocated 
 CPU prediction is supported; the GPU benchmark requires CUDA and has no CPU fallback.
 Matching seeds alone does not guarantee identical results across software or hardware changes.
 
+The optional connected-component diagnostics and their tests also require SciPy
+(`python -s -m pip install scipy==1.17.1` for the measured server version).
+This dependency is separate from model training.
+
+The optional augmentation and required-file test entries were added after the
+original test and unaugmented CV experiments. Source hashes remain strict: current code cannot
+silently resume or evaluate a run made with different source files. Use the exact
+archived source snapshot and environment for historical runs. For new experiments,
+create new runs and new validation/test plans; do not edit stored source hashes
+or replace the original test results.
+
 ## Manifest and original patient split
 
 `dataset.py` exposes Python functions, not a data-preparation CLI.
@@ -119,13 +130,42 @@ Fresh output directories must not already exist. Each run saves `run.json`, `his
 `run.json` identifies the latest and minimum-validation-loss checkpoints; only those checkpoint files are retained.
 Training uses the training partition and evaluates validation each epoch. It never evaluates the test partition.
 
+### Optional augmentation for new training runs
+
+Add `--augment` to either training command and choose a new output directory.
+For matched 2D/3D experiments, enable it for both models with the same seed and
+split. The paired evaluator rejects unequal augmentation settings.
+
+The policy applies a width/source-I flip to both image and target with probability
+0.5, then multiplies the prepared MRI intensities by a random factor in [0.9, 1.1].
+Label IDs and zero image background are preserved. No interpolation, axis swap,
+crop or affine resampling is added. These are temporary training tensors, not
+newly saved images with altered physical coordinates. Width is an array axis,
+not a claim about verified anatomical laterality.
+
+The transforms run only on training records. Validation and test always use the
+unchanged preparation pipeline. A local RNG keyed by the one-based epoch seed
+(`seed + epoch`), case ID and policy version makes transforms reproducible and
+independent of model dropout. `run.json` records whether augmentation is enabled
+and the full policy. Resume requires the same settings, including `--augment`.
+Omitting the flag leaves augmentation off. The original test and twelve-epoch
+CV used it off. The supplementary augmented comparison used it on in all three
+folds: 22 training patients/128 scans and 11 validation patients/64 scans per fold,
+with the original five test patients excluded. Each model completed four epochs
+from scratch, then resumed in a separate run directory to a fixed epoch-8 endpoint.
+Compare each endpoint with the same unaugmented fold at epoch 8, not epoch 4,
+epoch 12 or a best-validation checkpoint; see the results in [README](../README.md).
+
 `--epochs` is the **target total**, including previously completed epochs.
 To extend an explicitly chosen development run from eight to twelve, repeat its exact original command with
 `--resume --epochs 12`; this adds four epochs. The same rule applies to both trainers.
 Keep all other settings, source files, manifest/split bytes, resolved paths and environment unchanged.
 Resumption restores model, optimizer and RNG state at a completed epoch boundary, not midway through an epoch.
 Preserve `run.json` and both referenced checkpoints. Do not extend the already frozen formal-test models.
-The historical CV continuation used separate run directories to preserve the eight-epoch evidence.
+The historical unaugmented CV continuation preserved the eight-epoch runs.
+For the augmented four-to-eight continuation, keep `--augment` and use
+`--resume --epochs 8` with the exact frozen source and settings; preserve the
+parent run, checkpoints and first four history rows before extending a copied run.
 
 Export the training/validation loss and per-class validation Dice curves:
 
@@ -162,29 +202,37 @@ Both model runs must have completed the same training budget; selected weights a
 Use a new plan filename and a new results directory for each run. Paste the SHA-256 printed by each freeze command:
 
 ```bash
-python -s evaluate.py freeze \
+python -s train.py evaluate freeze \
   --run-2d private/repro-2d --run-3d private/repro-3d \
   --manifest private/manifest.json --split private/split.json \
   --partition validation --device cuda --threads 1 \
   --output-plan private/validation-plan.json
-python -s evaluate.py run \
+python -s train.py evaluate run \
   --plan private/validation-plan.json \
   --plan-sha256 PASTE_PRINTED_VALIDATION_PLAN_SHA256 \
   --output-dir private/validation-evaluation
 
-python -s evaluate.py freeze \
+python -s train.py evaluate freeze \
   --run-2d private/repro-2d --run-3d private/repro-3d \
   --manifest private/manifest.json --split private/split.json \
   --partition test --device cuda --threads 1 \
   --validation-report private/validation-evaluation/evaluation.json \
   --output-plan private/test-plan.json
-python -s evaluate.py run \
+python -s predict.py test \
   --plan private/test-plan.json \
   --plan-sha256 PASTE_PRINTED_TEST_PLAN_SHA256 \
   --output-dir private/test-evaluation
 ```
 
 The test gate requires a successful full-validation report with matching setup identities.
+`train.py evaluate` delegates to the same frozen-plan implementation as
+`evaluate.py`; it does not train while testing. `predict.py test` only accepts
+a test-partition plan and evaluates every case in it for both models. It prints
+the resulting metrics and saves `evaluation.json` plus anonymous 2D/3D panels
+for the first test case by default. Optional `--panel-case-ids` chooses which
+test cases receive images; it never narrows the scored cohort. Test panels are
+explicitly labelled as test, and validation panels keep their existing labels.
+The original `predict.py --run-dir ...` command remains validation-only.
 Validation reloaded metrics must have identical validity flags and per-case/class Dice/IoU differences at most 0.005.
 This tolerance is distinct from the stricter metric-match flags retained in the report.
 Evaluation uses float32, disables autocast and TF32, and enables deterministic algorithms.
@@ -213,6 +261,44 @@ python -s benchmark_gpu.py \
 Repeat with the corresponding model/archive and a new output directory for each block.
 The timing measures forward inference, excluding file loading, host/device transfer and postprocessing.
 Running this against newer checkpoints produces a new benchmark, not a replay of the epoch-four measurement.
+
+## Connected-component diagnostics
+
+`component_analysis.py` operates on complete prepared label volumes, without
+changing predictions. After validation inference using the matching archived
+source and checkpoint, pass the CPU integer arrays to:
+
+```python
+from component_analysis import component_metrics
+
+report_26 = component_metrics(prediction.numpy(), prepared.target.numpy(), connectivity=26)
+report_6 = component_metrics(prediction.numpy(), prepared.target.numpy(), connectivity=6)
+```
+
+Here `prepared` and `prediction` are the prepared case and CPU label tensor from
+`predict.py`'s inference functions. Each report includes every foreground class,
+component size, same-class ground-truth overlap, bounding box and representative
+depth. Counts use prepared-grid voxels; no size cutoff or component removal is
+applied. A zero-overlap prediction component is wholly false positive for that
+class, but this measure does not count false-positive extensions attached to a
+component that overlaps the ground truth. Non-largest components are not
+automatically wrong, and ground truth can itself have multiple components.
+
+`component_panels.render_component_panels` accepts the prepared case, paired
+2D/3D NumPy predictions and their 26-neighbour reports. It uses a common crop and
+planes, highlights zero-overlap components, and returns selection/geometry metadata.
+An illustrative satellite requires both an overlapping and a zero-overlap
+prediction component of the same class. Prostate has priority over rectum; within
+that class the largest eligible component is selected, breaking ties by 2D then
+3D and component ID. This purposeful illustration does not estimate frequency.
+The reported check reused original epoch-8 weights and all 19 original validation
+scans on four CPU cores (2 min 23 s, no GPU). Its 38 confusion matrices matched
+the archived CPU predictions exactly; historical CPU/CUDA discrepancies remain.
+Only the five existing failure cases were eligible for figures. Across those
+cases, prostate again has priority over rectum, followed by largest component,
+ascending example number, 2D before 3D and component ID. The published PNG is an
+unchanged server output. The private records retain all five-class component
+sizes, both connectivities, per-patient summaries and file/checkpoint hashes.
 
 ## Supplemental three-fold CV and reproducibility boundary
 
@@ -247,7 +333,8 @@ Each held-out fold has 11 patients/64 scans; its training complement has 22 pati
 Save a development-only manifest and three split files using the same nine-field schema:
 `validation_patients=11`, `test_patients=0`, `test=[]`, and sorted case IDs for training/validation.
 Each split hashes the development manifest. Use those files in both training commands, with separate output directories.
-Train six models from scratch for eight epochs, then resume each designated run to a total of twelve.
+For the historical unaugmented comparison, train six models from scratch for eight
+epochs with augmentation off, then resume each designated run to a total of twelve.
 
 CV metrics use fixed epoch-eight and epoch-twelve history rows, **not** the best-validation checkpoint.
 In particular, the third-fold 3D run's best epoch is eleven, so `predict.py`/`evaluate.py` do not directly reproduce
@@ -256,3 +343,14 @@ Aggregate valid scans per patient first, then equally weight patients; retain un
 Report all folds and all 33 out-of-fold patients. Fold standard deviations are descriptive, not independent-study uncertainty.
 CV followed inspection of the original test results; continuation to twelve was chosen after viewing epoch eight.
 These are exploratory split-sensitivity results, not a new untouched test or a basis for reevaluating the original test set.
+
+The augmented comparison retained the completed first fold and then trained
+2D/3D on folds 2 and 3 with the same frozen policy, seed, source and fold assignments.
+These four models used two four-epoch stages each, with separate parent and resumed
+run directories. All eight sequential single-GPU jobs completed on 23 October;
+records were collected and verified on 24 October. Each stayed below 30 minutes
+(2 h 52 min 05 s total, within the 240-minute cap). Aggregate all three fixed epoch-8
+endpoints, retaining every fold. This expansion followed inspection of fold 1,
+so it remains exploratory. The original test was not rerun.
+The augmented fold-2 2D model's best checkpoint is epoch 7; reproduce its fixed
+epoch-8 score from history row 8 or the saved epoch-8 report, not the best checkpoint.

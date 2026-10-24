@@ -5,6 +5,10 @@ so it is an adaptation of the conventional U-Net encoder/decoder topology, not
 an exact reproduction of the original 2015 architecture. It has no residual
 blocks, dropout, deep supervision, or operations that mix adjacent slices.
 
+Topology reference: Ronneberger, Fischer and Brox, "U-Net: Convolutional
+Networks for Biomedical Image Segmentation" (2015),
+https://arxiv.org/abs/1505.04597.
+
 The volume wrapper permits the same whole-case objective and one optimizer
 update per case as the 3D model. Training code, rather than this module, defines
 the loss, preprocessing, patient split, and checkpoint-selection policy.

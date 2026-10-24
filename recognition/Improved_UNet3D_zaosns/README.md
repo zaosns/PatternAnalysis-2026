@@ -7,13 +7,14 @@ an implemented slice-wise 2D U-Net on the same patients and prepared grids.
 
 **Finding:** 3D improves prostate terminal overlap on the original frozen test,
 but does not provide a consistent advantage across splits, organs and training
-budgets. The 2D baseline leads the supplementary twelve-epoch CV aggregate
+budgets. The 2D baseline leads the supplementary unaugmented twelve-epoch CV aggregate
 results and is cheaper in the measured inference benchmark.
 
-The reported training and evaluation runs are complete. Remaining implementation
-and submission items are identified below.
+The original test, unaugmented CV and augmented three-fold runs are complete.
+Further development and submission items are identified below.
 
-[One-page feasibility review (PDF)](docs/feasibility-review.pdf)
+[One-page feasibility review: 23 October check-off version (PDF)](docs/feasibility-review.pdf).
+Later experiments and current results are reported below.
 
 ## Data and evaluation design
 
@@ -45,8 +46,18 @@ voxel mean and population standard deviation, then downsampled by factor 2.
 Images use trilinear interpolation; labels use matched nearest-neighbor indices.
 The updated affine preserves the outer field of view. Typical inputs become
 `[D,H,W]=[64,128,128]`; one deeper training scan becomes `[72,128,128]`.
-Axes retain source K/J/I order. No augmentation, isotropic resampling, clipping
-or postprocessing was used; augmentation remains unimplemented.
+Axes retain source K/J/I order. The original test and twelve-epoch CV used no
+augmentation. No experiment used isotropic resampling, clipping or postprocessing.
+
+The supplementary augmentation experiment uses optional `--augment` in both trainers:
+a paired width/source-I flip with probability 0.5 and MRI intensity scaling
+between 0.9 and 1.1 after preparation. The flip uses the same indices for image
+and mask; scaling changes only the image and preserves zero background.
+This is an array-axis reflection, not an anatomically verified left/right transform.
+It is applied only to training batches, using a local per-case RNG derived from
+the epoch seed and case ID. Validation and test inputs are never augmented.
+The versioned policy is saved in `run.json`; changing it on resume is rejected.
+Its three-fold, eight-epoch HipMRI results are reported separately below.
 
 Model input is float32 `[N,1,D,H,W]` and output is six-class logits
 `[N,6,D,H,W]`; argmax returns `[N,D,H,W]` labels. Targets remain integer class
@@ -170,7 +181,7 @@ contain **667/815** prostate FP for 2D/3D. Its mean terminal benefit therefore
 does not remove boundary errors. On the original validation CPU diagnostic,
 terminal patient Dice instead favors 2D (**0.7091/0.6955**).
 
-### Supplementary three-fold CV: sensitivity to split and training budget
+### Supplementary unaugmented three-fold CV: split and training budget
 
 CV was declared **after viewing the original test**. Only the 33 development
 patients / 192 scans are used: each fold trains on 22 patients / 128 scans and
@@ -215,6 +226,31 @@ convergence. Each fold has fewer training patients than the original experiment,
 and evaluates different people. These scores neither replace nor enlarge the
 original test; CV12 has not been evaluated on that test cohort.
 
+### Supplementary augmentation: three folds at epoch 8
+
+Each augmented model started fresh within its fold, trained for four epochs,
+then resumed to epoch 8. Fold 1 finished first; its results were retained while
+folds 2 and 3 were completed with the same policy, seed and prepared grids.
+Each fold uses 22 training and 11 validation patients (128/64 scans). The original
+five test patients remain excluded. Scores average scans within each patient,
+then weight all 33 out-of-fold patients equally. Controls are archived epoch-8 runs.
+
+| Prostate patient Dice | 2D without augmentation | 2D with augmentation | 3D without augmentation | 3D with augmentation |
+| --- | ---: | ---: | ---: | ---: |
+| Fold 1 | 0.7126 | 0.7639 | 0.7203 | 0.7292 |
+| Fold 2 | 0.6362 | 0.6647 | 0.6818 | 0.7109 |
+| Fold 3 | 0.7500 | 0.7329 | 0.7192 | 0.7041 |
+| All 33 out-of-fold patients | 0.6996 | 0.7205 | 0.7071 | 0.7147 |
+
+Mean prostate Dice rose by 0.0209 in 2D and 0.0076 in 3D; 22/33 and 17/33
+patients improved, respectively. Both models declined on fold 3. Other classes
+show tradeoffs: bladder patient Dice rose in both, but 2D rectum fell from
+0.7934 to 0.7770 and 3D bones from 0.8346 to 0.8263. The 3D prostate scan-mean
+Dice also fell from 0.7226 to 0.7170 despite its higher patient mean.
+One seed, overlapping training folds and expansion after viewing fold 1 make
+this exploratory evidence. The augmentation comparison uses equal epoch-8
+budgets, not the unaugmented epoch-12 results. The original test remains unchanged.
+
 ### Measured computational cost
 
 The historical **epoch-4** benchmark used one A100-PCIE-40GB, float32 prepared
@@ -249,6 +285,25 @@ columns, **green=TP, magenta=FP, cyan=FN**, not confidence. Depth `d` follows
 source K; counts are prepared-grid voxels. Paired images share geometry and
 display windows and are unchanged server outputs. Open them for full-size labels.
 
+The 24 October component check replayed both models on all 19 original validation
+scans (five patients). All 38 CPU confusion matrices matched the earlier CPU
+records exactly. The table counts complete 3D prediction components with no
+same-class GT overlap, using 26-neighbour connectivity; masks were not changed.
+
+| Class | Scans with zero-overlap components, 2D / 3D (of 19) | Total zero-overlap voxels, 2D / 3D |
+| --- | ---: | ---: |
+| Body | 8 / 11 | 172 / 72 |
+| Bones | 18 / 5 | 886 / 39 |
+| Bladder | 8 / 10 | 515 / 45 |
+| Rectum | 7 / 5 | 49 / 16 |
+| Prostate | 0 / 4 | 0 / 26 |
+
+These are repeated scans, not 19 independent patients. The 3D prostate islands
+account for only 26/6,438 = 0.40% of its FP voxels; most FP belong to components
+that also overlap GT. Six-neighbour connectivity gives five affected scans and
+27 voxels, showing that connectivity matters without changing this conclusion.
+Non-largest components are not automatically wrong; GT may have multiple parts.
+
 ### 1. Example 2: shared terminal omission and bladder undercoverage
 
 At `d=23`, both models miss all **35** prostate target voxels. At the largest
@@ -256,12 +311,18 @@ bladder plane, FN are **546/1,123** for 2D and **856/1,123** for 3D; whole-volum
 bladder Dice is **0.5646/0.3633**. Both also predict rectum on a GT-empty plane
 (29/40 FP). Added context has not prevented these errors. The small terminal
 target motivates a resolution-sensitivity experiment, but downsampling is an
-untested explanation. Review target disappearance and bladder coverage separately;
-slice-level extra regions do not prove disconnected three-dimensional components.
+untested explanation. Review target disappearance and bladder coverage separately.
 
 | 2D | 3D |
 | --- | --- |
 | ![Example 2, original epoch-8 2D validation panels](figures/failure-example-02-2d-epoch8.png) | ![Example 2, original epoch-8 3D validation panels](figures/failure-example-02-3d-epoch8.png) |
+
+Full-volume analysis additionally confirms one isolated 3D prostate FP voxel at
+`d=48`, separate from the GT-overlapping prediction; 2D has none in this case.
+This detail follows the preselected five-case/prostate-first illustration rule.
+Orange marks zero-overlap components; cyan components can still contain FP.
+
+![Example 2, paired 3D component detail on original epoch-8 validation predictions](figures/failure-example-02-components-epoch8.png)
 
 ### 2. Example 3: whole-volume improvement conceals a worse terminal region
 
@@ -331,13 +392,14 @@ undercoverage and prostate overextension. These retrospective GT comparisons
 are not an automatic failure detector or validated clinical workflow. Clinical
 safety and correction time were not measured. Five test patients, one seed,
 architecture confounds and factor-2 resolution limit generalization. Native-grid
-accuracy, physical surface distances and 3D connected components remain unmeasured.
+accuracy and physical surface distances remain unmeasured. Component counts were
+measured only on the original prepared-grid validation predictions, not CV12 or test.
 The validation panels cannot establish the cause of the CV12 ranking.
 
-A plain-3D ablation, resolution comparison or targeted loss/augmentation study
-could isolate candidate causes in future development experiments. None was
-performed here. Original test results remain fixed; further work must not use
-that cohort to select changes.
+A plain-3D ablation, resolution comparison or targeted loss study could help
+explain these errors; none has been performed. The three-fold augmentation
+comparison tests one training change without isolating architectural causes.
+Original test results remain fixed; further work must not use that cohort to select changes.
 
 ## Running the project
 
@@ -352,7 +414,7 @@ data preparation, both training entries, checkpoint restoration, prediction,
 frozen evaluation and the benchmark.
 
 ```bash
-# Fresh original 3D recipe; data files are private prerequisites.
+# Fresh 3D run using the reported settings; private data files are prerequisites.
 python -s train.py --manifest private/manifest.json --split private/split.json \
   --output-dir private/repro-3d --epochs 8 --device cuda \
   --deterministic --assume-label-units-from-image
@@ -371,8 +433,14 @@ Replace `VALIDATION_CASE_ID` with an ID in the frozen validation list. Predictio
 exports PNG panels and `prediction.json`; input/output examples appear above.
 
 The training run saves `run.json`, `history.csv` and latest/best checkpoints.
-`predict.py` loads the best checkpoint for validation examples; `evaluate.py`
-provides a guarded full-validation rehearsal and held-out entry. CV endpoints
+`train.py evaluate freeze|run` exposes the guarded validation/test evaluator.
+`predict.py` retains its validation-example command and adds `predict.py test`
+for a frozen full-test plan, printed metrics and paired prediction panels.
+Both entry points reuse `evaluate.py` and require matching validation evidence
+before accessing test images. Training does not automatically run the test set.
+New source changes require new runs/plans; use the exact archived source and
+environment for historical runs, rather than changing their recorded hashes.
+CV endpoints
 instead use saved epoch-8/12 evaluation histories. Private fold assignments,
 historical orchestration and weights are not distributed, so the public repo
 alone is not a one-command reproduction of the archived CV runs. Synthetic
@@ -381,7 +449,7 @@ do not establish real-data accuracy or clinical suitability.
 
 ## Feasibility review
 
-**Project aim.** My project tests whether a 3D Improved U-Net improves prostate segmentation at difficult end regions compared with a 2D U-Net, and whether better results are worth the extra computing cost. The output is a draft organ outline for a person to check.
+**Project aim.** My project tests whether a 3D Improved U-Net improves prostate segmentation at difficult end regions compared with a 2D U-Net, and whether better results are worth the extra computing cost. The intended user is an imaging specialist who checks the draft organ outline.
 
 **Method and course concepts.** Difficulty level: Hard. The main model is a 3D Improved U-Net: 3D residual units, encoder-decoder skip connections and deep supervision that adds predictions from different scales. Course concepts include convolutions, normalization and gradient-based learning. For both models, data preparation halves the depth, height and width (downsampling factor: 2). Encoder feature channels by level: 16, 32, 64, 128; batch size: 1 MRI volume; Adam learning rate: 0.001; random seed: 3710; loss: equal-weight cross entropy plus foreground Dice. The 3D dropout probability is 0.3. Model reference: Isensee et al., arXiv:1802.10508 (task reference [2]).
 
@@ -391,7 +459,7 @@ do not establish real-data accuracy or clinical suitability.
 2. Target original test prostate scan-mean Dice >= 0.70 using the same prepared image grid; report all foreground Dice/IoU and patient means. Select the checkpoint with the lowest validation loss; choose the earliest if tied. This is how I apply the task's Dice target.
 3. Use the same data splits and image grids. Compare end regions (source-K terminal fifths) and errors between nearby classes. These regions approximate the ends; they are not confirmed anatomical base/apex labels.
 4. Use <= 4 GiB peak allocated tensor memory and <= 2 seconds median forward-pass time across scans after warm-up per prepared volume on one A100; measure preparation separately.
-5. Compare 3-5 failure cases side by side, including end-region errors and separate predicted pieces. Recommend a model based on quality and cost. Five cases are shown; separate pieces in 3D still need checking.
+5. Compare 3-5 failure cases side by side, including end-region errors and separate predicted pieces. Recommend a model based on quality and cost. Five cases are shown, including a full-volume-confirmed isolated prediction.
 
 **Current results.** Original fixed test (epoch 8): 5 patients, 19 scans; prostate scan-mean Dice 2D: 0.8411; 3D: 0.8354, meeting the project target. Patient-mean Dice is 2D: 0.8067; 3D: 0.8242; terminal-union patient-mean Dice is 2D: 0.6697; 3D: 0.7531. Scan means give more weight to patients with more scans. The 3D advantage at the ends does not appear in every split: original validation terminal patient-mean Dice is 2D: 0.7091; 3D: 0.6955 (checked on CPU).
 
@@ -399,7 +467,7 @@ Additional three-fold cross-validation leaves out the five test patients: 33 dev
 
 Earlier speed and memory test (epoch 4, same A100): median forward time 2D: 13.36 ms; 3D: 49.96 ms; allocated memory peak 2D: 445.89 MiB; 3D: 565.98 MiB. Prepared volume dimensions (depth, height, width): 64 x 128 x 128 voxels. Both meet the speed and memory targets. Times exclude data preparation, transfer and output processing. These measurements are not for the epoch-12 cross-validation models or memory used during training. Five pictured epoch-8 CPU validation cases show missed end regions, missed parts of the bladder and extra areas labelled as prostate; they are not from epoch-12 cross-validation or the test set.
 
-**Limits, next steps and backup plan.** Limits include five test patients, one seed, similar scans from the same patient, shared training patients across folds, model design differences, downsampling and small CPU/CUDA differences. Next, I plan to rerun the fixed epoch-8 validation predictions and count separate 3D pieces and wrongly predicted islands: one CPU job limited to 15 minutes, 0 additional GPU minutes, no retraining. I also plan to run more training and evaluation tasks for both the 2D and 3D models to compare segmentation quality and result stability. These tasks have not started; computing time limits will be set before submitting the jobs. I would keep 2D as the faster backup and 3D as the main model being studied. Better results in some regions do not mean 3D is always better.
+**Limits, next steps and backup plan.** Limits include five test patients, one seed, repeated scans, shared training patients across folds, model differences, downsampling and small CPU/CUDA differences. The augmented three-fold comparison is complete (table above). The eight jobs for folds 2 and 3 finished on 23 October; results and server records were collected and verified on 24 October. They used 2 h 52 min 05 s in total, within the 240-minute cap, with every job under 30 minutes. The original test was not rerun. The component check completed on 24 October in 2 min 23 s on four CPU cores, with no GPU use. Next, finish the report and reproduction review before preparing the submission PR and PDF. I would keep 2D as the faster backup and 3D as the main model being studied. Better results in some regions do not mean 3D is always better.
 
 ## Code structure
 
@@ -407,16 +475,18 @@ Earlier speed and memory test (epoch 4, same A100): median forward time 2D: 13.3
 | --- | --- |
 | `modules.py`, `baseline2d.py` | Main 3D model and slice-wise 2D baseline |
 | `dataset.py`, `objectives.py` | Pairing, patient splits, preparation, loss and metrics |
-| `train.py`, `train_baseline2d.py`, `checkpoint.py` | Training, validation and resumable model/optimizer/RNG state |
-| `predict.py`, `prediction_panels.py`, `terminal_regions.py` | Validation predictions, paired panels and regional errors |
+| `train.py`, `train_baseline2d.py`, `checkpoint.py` | Optional augmented training, validation, resumable state; `train.py evaluate` delegates frozen evaluation |
+| `predict.py`, `prediction_panels.py`, `terminal_regions.py` | Validation examples or guarded test inference, paired panels and regional errors |
+| `component_analysis.py`, `component_panels.py` | Complete-volume component counts and paired isolated-component illustrations |
 | `evaluate.py` | Frozen-plan validation replay and held-out evaluation |
 | `benchmark_gpu.py`, `benchmark_inference.py` | Matched forward-time/memory measurement |
 | `plot_history.py`, `tests/` | Learning curves and synthetic correctness checks |
 
-Section 4.1 of the specification requests augmentation in `dataset.py` and test
-usage through `train.py`/`predict.py`. Augmentation is not implemented here;
-held-out evaluation currently resides in `evaluate.py`. These implementation
-alignment items remain open, alongside the unverified 3D disconnection analysis.
+The Section 4.1 augmentation and test-entry requirements now have implementations:
+training-only transforms in `dataset.py`, explicit evaluation through `train.py`,
+and test inference/visualisation through `predict.py`. Synthetic checks cover
+these entries, and augmented HipMRI training is complete for all three folds.
+The original test remains unchanged; the original-validation component analysis is complete.
 
 The final submission requires the working project PR to the course repository's
 `topic-recognition` branch and a PDF export of this report for Turnitin, plus
@@ -439,8 +509,8 @@ code, decisions and claims.
 
 ## References
 
-- Supplied COMP3710/COMP7710 report specification, sections 2.2-6 (filename v2.3;
-  cover DRAFT/Version 2.2). Course announcements govern any revised requirements.
+- Supplied COMP3710/COMP7710 report specification, Version 2.5, sections 2.2-6.
+  This is the current requirements reference; course announcements govern later revisions.
 - Isensee et al., [Brain Tumor Segmentation and Radiomics Survival Prediction:
   Contribution to the BRATS 2017 Challenge](https://arxiv.org/abs/1802.10508).
   Main architecture reference, especially section 2.1.

@@ -9,6 +9,7 @@ Keep real manifests outside Git, for example in the ignored data/ directory.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -278,6 +279,48 @@ def load_patient_split(
     return PatientSplit(**groups)
 
 
+def training_augmentation_policy() -> dict:
+    """Return a fresh, JSON-serializable description of the opt-in policy.
+
+    The width axis is source NIfTI I, not an asserted anatomical left/right
+    direction. Augmentation is for model training only; it creates no physical
+    image or modified affine. Bump the version when changing the transforms or
+    their deterministic random-number scheme.
+    """
+    return {
+        "name": "paired_width_flip_and_intensity_scale",
+        "version": 1,
+        "stage": "after_preprocessing_training_only",
+        "spatial_flip": {"axis": "width/source-I", "probability": 0.5},
+        "image_intensity_scale": {"minimum": 0.9, "maximum": 1.1,
+                                  "preserve_zero_values": True},
+        "randomness": "local Python RNG seeded by SHA256 of policy name/version, epoch seed and case ID",
+    }
+
+
+def _augment_training_tensors(
+    prepared: PreprocessedCase, *, seed: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Create ephemeral tensors without changing the case or its geometry."""
+    import torch
+
+    policy = training_augmentation_policy()
+    seed_bytes = json.dumps(
+        [policy["name"], policy["version"], seed, prepared.record.case_id],
+        ensure_ascii=True, separators=(",", ":"),
+    ).encode("utf-8")
+    rng = random.Random(int.from_bytes(hashlib.sha256(seed_bytes).digest(), "big"))
+    flip = rng.random() < policy["spatial_flip"]["probability"]
+    limits = policy["image_intensity_scale"]
+    scale = rng.uniform(limits["minimum"], limits["maximum"])
+    with torch.no_grad():
+        # Apply the identical index permutation to image and integer target.
+        # Positive multiplication keeps zero values zero and never changes labels.
+        image = prepared.image.flip(-1) if flip else prepared.image
+        target = prepared.target.flip(-1) if flip else prepared.target.clone()
+        return image * scale, target
+
+
 def iter_case_batches(
     records: Sequence[CaseRecord],
     *,
@@ -285,6 +328,8 @@ def iter_case_batches(
     assume_label_units_from_image: bool = False,
     num_classes: int = 6,
     seed: int | None = None,
+    training: bool = False,
+    augment: bool = False,
 ) -> Iterator[tuple[torch.Tensor, torch.Tensor]]:
     """Yield CPU batches of one preprocessed volume, with no workers or cache.
 
@@ -292,6 +337,13 @@ def iter_case_batches(
     have different spatial sizes. Only the provided records are read, so callers
     must pass the training or validation tuple, never concatenate held-out data.
     None preserves their order; an integer seed shuffles via an isolated RNG.
+    Augmentation is disabled by default and requires training=True plus an
+    explicit integer epoch seed. It pairs a width-axis flip with image-only
+    intensity scaling after preprocessing. Each case has a local RNG keyed by
+    seed and case ID, independent of order and global RNG state. Callers must
+    set training=True only for training records; this iterator cannot infer a
+    record's partition. Validation/test callers must leave augmentation off.
+    Augmented batches carry no affines and do not mutate prepared case metadata.
     Validation and I/O happen on iteration. Original volumes are released before
     yielding, and the generator releases its batch before loading the next case.
     A consumer may of course retain any yielded tensors itself.
@@ -304,6 +356,12 @@ def iter_case_batches(
         raise ValueError("num_classes must be an integer >= 2.")
     if seed is not None and (isinstance(seed, bool) or not isinstance(seed, int)):
         raise ValueError("seed must be an integer or None.")
+    if not isinstance(training, bool) or not isinstance(augment, bool):
+        raise ValueError("training and augment must be booleans.")
+    if augment and not training:
+        raise ValueError("Augmentation requires training=True; validation/test must not be augmented.")
+    if augment and seed is None:
+        raise ValueError("Augmentation requires an explicit integer epoch seed.")
     cases = list(records)
     if not cases or any(not isinstance(record, CaseRecord) for record in cases):
         raise ValueError("records must contain at least one CaseRecord.")
@@ -319,8 +377,14 @@ def iter_case_batches(
             del loaded
         except Exception as error:
             raise RuntimeError(f"Case {record.case_id!r} could not be loaded or preprocessed: {error}") from error
-        yield prepared.image.unsqueeze(0), prepared.target.unsqueeze(0)
-        del prepared
+        if augment:
+            image, target = _augment_training_tensors(prepared, seed=seed)
+            del prepared
+            yield image.unsqueeze(0), target.unsqueeze(0)
+            del image, target
+        else:
+            yield prepared.image.unsqueeze(0), prepared.target.unsqueeze(0)
+            del prepared
 
 
 def load_nifti_case(

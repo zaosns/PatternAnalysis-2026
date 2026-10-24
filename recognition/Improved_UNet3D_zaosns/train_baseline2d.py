@@ -23,7 +23,8 @@ import time
 import torch
 
 from baseline2d import SliceWiseUNet2D
-from dataset import iter_case_batches, load_manifest, load_patient_split
+from dataset import (iter_case_batches, load_manifest, load_patient_split,
+                     training_augmentation_policy)
 from train import (CrossEntropyDiceLoss, train_one_epoch, validate_one_epoch,
                    _atomic_json, _checkpoint_name, _json_metrics,
                    _refresh_derived_files, _validate_run_state)
@@ -101,6 +102,8 @@ def run_training(args):
         raise ValueError('learning_rate must be finite and positive.')
     if args.device not in ('cpu', 'cuda') or type(args.deterministic) is not bool:
         raise ValueError('Require cpu/cuda and a boolean deterministic flag.')
+    if type(args.augment) is not bool:
+        raise ValueError('augment must be a bool.')
     if args.deterministic:
         os.environ.setdefault('CUBLAS_WORKSPACE_CONFIG', ':4096:8')
     torch.use_deterministic_algorithms(args.deterministic, warn_only=False)
@@ -140,6 +143,8 @@ def run_training(args):
         downsample_factor=args.downsample_factor,
         assume_label_units_from_image=args.assume_label_units_from_image,
         seed=args.seed, shuffle='local_Random(seed + one_based_epoch)',
+        augmentation=dict(enabled=args.augment,
+            policy=training_augmentation_policy() if args.augment else None),
         device=args.device, threads=args.threads,
         reproducibility=dict(deterministic_requested=args.deterministic,
             deterministic_algorithms=torch.are_deterministic_algorithms_enabled(),
@@ -191,7 +196,8 @@ def run_training(args):
                 torch.cuda.reset_peak_memory_stats()
             started = time.perf_counter()
             trained = train_one_epoch(model,
-                iter_case_batches(split.train, seed=args.seed + epoch, **options),
+                iter_case_batches(split.train, seed=args.seed + epoch,
+                                  training=True, augment=args.augment, **options),
                 optimizer, criterion, device=args.device)
             validated = validate_one_epoch(model, iter_case_batches(split.validation, **options),
                 criterion, num_classes=args.num_classes, include_background=False, device=args.device)
@@ -224,6 +230,8 @@ def build_parser():
     parser.add_argument('--output-dir', type=Path, required=True)
     parser.add_argument('--epochs', type=int, required=True, help='Target total completed epochs.')
     parser.add_argument('--resume', action='store_true')
+    parser.add_argument('--augment', action='store_true',
+                        help='Enable paired width flips and small MRI intensity scaling for training only.')
     parser.add_argument('--device', choices=('cpu', 'cuda'), default='cuda')
     parser.add_argument('--num-classes', type=int, default=6)
     parser.add_argument('--channels', nargs='+', type=int, default=[16, 32, 64, 128])

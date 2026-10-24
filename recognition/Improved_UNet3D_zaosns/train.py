@@ -3,8 +3,9 @@
 These functions connect an iterable of (image, target) tensor batches to the
 existing model and objectives. Epoch-boundary persistence is in checkpoint.py.
 The command uses a frozen patient split, batch size one and validation-loss
-model selection. It never evaluates test volumes. Synthetic tests do not
-establish MRI accuracy. Run python -s train.py --help for the command interface.
+model selection. Training never evaluates test volumes. The explicit
+``evaluate`` command delegates validation/test work to the frozen-plan evaluator.
+Synthetic tests do not establish MRI accuracy.
 """
 
 import argparse
@@ -20,6 +21,7 @@ from pathlib import Path
 import platform
 import random
 import re
+import sys
 import tempfile
 import time
 import warnings
@@ -28,7 +30,8 @@ import torch
 from torch import Tensor, nn
 
 from checkpoint import load_checkpoint, save_checkpoint
-from dataset import iter_case_batches, load_manifest, load_patient_split
+from dataset import (iter_case_batches, load_manifest, load_patient_split,
+                     training_augmentation_policy)
 from modules import SegmentationModel3D
 from objectives import SoftDiceLoss, dice_iou_per_class
 
@@ -302,12 +305,16 @@ def _refresh_derived_files(output: Path, state: dict) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Train the 3D model on a frozen patient split (batch size 1).")
+    parser = argparse.ArgumentParser(
+        description="Train the 3D model on a frozen patient split (batch size 1).",
+        epilog="For explicit validation/test evaluation: train.py evaluate freeze --help or train.py evaluate run --help.")
     parser.add_argument("--manifest", type=Path, required=True, help="Private case manifest JSON.")
     parser.add_argument("--split", type=Path, required=True, help="Frozen split JSON with the manifest SHA-256.")
     parser.add_argument("--output-dir", type=Path, required=True, help="New run directory, or an existing one with --resume.")
     parser.add_argument("--epochs", type=int, required=True, help="Target total completed epochs, including earlier epochs on resume.")
     parser.add_argument("--resume", action="store_true", help="Continue from the latest epoch referenced by run.json.")
+    parser.add_argument("--augment", action="store_true",
+                        help="Enable paired width flips and small MRI intensity scaling for training only.")
     parser.add_argument("--device", choices=("cpu", "cuda"), default="cuda", help="Explicit device; no silent CPU fallback.")
     parser.add_argument("--num-classes", type=int, default=6)
     parser.add_argument("--channels", nargs="+", type=int, default=[16, 32, 64, 128])
@@ -345,6 +352,8 @@ def run_training(args: argparse.Namespace) -> dict:
         raise ValueError("device must be cpu or cuda.")
     if not isinstance(args.deterministic, bool):
         raise ValueError("deterministic must be a bool.")
+    if type(args.augment) is not bool:
+        raise ValueError("augment must be a bool.")
     # Configure before CUDA queries, seeding or model construction. Respect an
     # explicitly supplied cuBLAS workspace policy and record its actual value.
     if args.deterministic:
@@ -365,7 +374,7 @@ def run_training(args: argparse.Namespace) -> dict:
                              image_path=str(case.image_path), label_path=str(case.label_path))
                         for case in cases]
     resolved_hash = hashlib.sha256(json.dumps(resolved_records, sort_keys=True).encode("utf-8")).hexdigest()
-    # This initial runner has no workers, augmentation or external RNG samplers.
+    # Augmentation uses an isolated per-case RNG, separate from model dropout.
     torch.set_num_threads(args.threads)
     random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -385,6 +394,8 @@ def run_training(args: argparse.Namespace) -> dict:
         "downsample_factor": args.downsample_factor,
         "assume_label_units_from_image": args.assume_label_units_from_image,
         "seed": args.seed, "shuffle": "local_Random(seed + one_based_epoch)",
+        "augmentation": {"enabled": args.augment,
+                         "policy": training_augmentation_policy() if args.augment else None},
         "device": args.device, "threads": args.threads,
         "reproducibility": {
             "deterministic_requested": args.deterministic,
@@ -442,7 +453,8 @@ def run_training(args: argparse.Namespace) -> dict:
                 torch.cuda.reset_peak_memory_stats()
             started = time.perf_counter()
             trained = train_one_epoch(
-                model, iter_case_batches(split.train, seed=args.seed + epoch, **batch_options),
+                model, iter_case_batches(split.train, seed=args.seed + epoch,
+                                         training=True, augment=args.augment, **batch_options),
                 optimizer, criterion, device=args.device)
             validated = validate_one_epoch(
                 model, iter_case_batches(split.validation, **batch_options), criterion,
@@ -478,6 +490,11 @@ def run_training(args: argparse.Namespace) -> dict:
 
 
 def main(argv=None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "evaluate":
+        # Import lazily: evaluate imports these training helpers and predict.
+        from evaluate import main as evaluate_main
+        return evaluate_main(argv[1:])
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

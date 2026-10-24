@@ -1,9 +1,10 @@
-"""Inspect a saved best checkpoint on explicitly selected validation scans.
+"""Inspect validation scans, or evaluate a frozen full test cohort with panels.
 
-This command is for validation diagnostics only. It uses the frozen training
-preprocessing, writes private PNG panels and JSON provenance, and never reads
-test voxels. Output directories must be new. It does not export native-grid
-segmentations or constitute final test evaluation.
+The original flag-based command remains validation-only. The separate `test`
+subcommand uses the paired frozen evaluator and requires a matching completed
+validation rehearsal. It evaluates every test case and writes private PNG
+examples and JSON provenance. Output directories must be new. Neither command
+exports native-grid segmentations.
 """
 
 import argparse
@@ -15,6 +16,8 @@ import os
 from pathlib import Path
 import platform
 import statistics
+import subprocess
+import sys
 import time
 
 import torch
@@ -338,7 +341,8 @@ def _run_locked(args, run_dir):
 
 
 def build_parser():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__,
+        epilog='For frozen full-cohort test evaluation and panels, use: python predict.py test --help')
     parser.add_argument('--run-dir', type=Path, required=True)
     parser.add_argument('--manifest', type=Path, required=True)
     parser.add_argument('--split', type=Path, required=True)
@@ -359,12 +363,43 @@ def build_parser():
 
 
 def main(argv=None):
+    arguments = list(sys.argv[1:] if argv is None else argv)
+    if arguments and arguments[0] == 'test':
+        return test_main(arguments[1:])
     parser = build_parser()
     try:
-        result = run_prediction(parser.parse_args(argv))
+        result = run_prediction(parser.parse_args(arguments))
     except (ValueError, OSError, KeyError, TypeError) as error:
         parser.error(str(error))
     print(f"Completed {len(result['cases'])} validation examples; saved-metric match: {result['all_saved_metrics_match']}.")
+    return 0
+
+
+def test_main(argv=None):
+    """Run the existing full-cohort test evaluator, with paired PNG examples."""
+    # Lazy import avoids the evaluator/prediction helper import cycle.
+    from evaluate import run_evaluation
+
+    parser = argparse.ArgumentParser(
+        description='Evaluate a frozen full test cohort after its matching validation rehearsal. '
+                    'Render the first frozen test case for each model by default; '
+                    'panel selection never reduces the evaluated cohort.')
+    parser.add_argument('--plan', type=Path, required=True)
+    parser.add_argument('--plan-sha256', required=True)
+    parser.add_argument('--output-dir', type=Path, required=True)
+    parser.add_argument('--panel-case-ids', nargs='+',
+                        help='Optional unique subset of frozen test IDs to render for both models.')
+    args = parser.parse_args(argv)
+    args.render_panels = True
+    try:
+        result = run_evaluation(args, required_partition='test')
+    except (ValueError, OSError, KeyError, TypeError, subprocess.SubprocessError) as error:
+        parser.error(str(error))
+    print(json.dumps(dict(status=result['status'], partition=result['partition'],
+        accuracy_role=result['accuracy_role'],
+        evaluated_cases_per_model={kind: len(model['cases']) for kind, model in result['models'].items()},
+        metrics={kind: model['summary'] for kind, model in result['models'].items()},
+        rendered_cases_per_model=len(result['panel_case_ids']))))
     return 0
 
 
