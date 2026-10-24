@@ -167,14 +167,21 @@ For the augmented four-to-eight continuation, keep `--augment` and use
 `--resume --epochs 8` with the exact frozen source and settings; preserve the
 parent run, checkpoints and first four history rows before extending a copied run.
 
-Export the training/validation loss and per-class validation Dice curves:
+After the first epoch finishes, open another terminal in this project directory
+while training continues. Plot the completed epochs' training/validation loss
+and per-class validation Dice, then rerun the command to refresh the curves:
 
 ```bash
-python -s plot_history.py private/repro-3d/run.json --output private/repro-3d-learning.png
+python -s plot_history.py private/repro-3d/run.json \
+  --output private/repro-3d-learning.png --overwrite
 ```
 
-Only `run.json` is needed, not MRI volumes or weights. Scores describe the prepared grid;
-the output file must be new unless `--overwrite` is explicitly supplied.
+Use `private/repro-2d/run.json` and a different output filename for the 2D run.
+The trainer publishes `run.json` atomically after each completed epoch, so each
+plot reads a complete saved history. This is a manual refresh, not an automatically
+updating window. It also works after training finishes. Only `run.json` is read;
+MRI volumes and weights are not loaded or changed. `--overwrite` replaces only
+the named curve file. Scores describe the prepared grid, not the test set.
 
 ## Inspect validation predictions
 

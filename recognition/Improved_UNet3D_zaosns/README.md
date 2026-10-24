@@ -433,6 +433,8 @@ Replace `VALIDATION_CASE_ID` with an ID in the frozen validation list. Predictio
 exports PNG panels and `prediction.json`; input/output examples appear above.
 
 The training run saves `run.json`, `history.csv` and latest/best checkpoints.
+After the first completed epoch, `plot_history.py` can refresh loss/Dice curves
+from another terminal while training continues; see the [reproduction guide](docs/reproduction.md).
 `train.py evaluate freeze|run` exposes the guarded validation/test evaluator.
 `predict.py` retains its validation-example command and adds `predict.py test`
 for a frozen full-test plan, printed metrics and paired prediction panels.
