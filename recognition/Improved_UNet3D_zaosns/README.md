@@ -1,5 +1,7 @@
 # HipMRI Segmentation with a 3D Improved U-Net
 
+Author: Ziheng Zhang | Student ID: s4910001
+
 This project asks whether 3D spatial context improves prostate segmentation at
 target ends and adjacent-organ boundaries enough to justify its computational
 cost. The main model is a **3D Improved U-Net**, compared with
