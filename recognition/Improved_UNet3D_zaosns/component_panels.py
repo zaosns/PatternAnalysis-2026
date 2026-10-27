@@ -152,7 +152,7 @@ def render_component_panels(prepared, prediction_2d, prediction_3d, components_2
     fig.legend(handles=[Patch(color='#80d98a', label='Ground truth'),
                         Patch(color='#1bb6bf', label='Prediction component with some GT overlap'),
                         Patch(color='#f07840', label='Prediction component with zero GT overlap')],
-               loc='lower center', bbox_to_anchor=(.5, .055), ncol=3, fontsize=8)
+               loc='lower center', bbox_to_anchor=(.5, .075), ncol=3, fontsize=8)
     count_text = ' | '.join(f'{m.upper()}: {v["zero_overlap_prediction_component_count"]} zero-overlap components, '
                             f'{v["zero_overlap_prediction_voxels"]} voxels' for m, v in volume_counts.items())
     fig.text(.5, .026, count_text + '\nCounts use full 3D volumes and 26-neighbour connectivity; predictions unchanged.'
