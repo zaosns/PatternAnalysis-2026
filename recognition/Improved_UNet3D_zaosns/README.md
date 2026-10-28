@@ -323,6 +323,8 @@ Full-volume analysis additionally confirms one isolated 3D prostate FP voxel at
 `d=48`, separate from the GT-overlapping prediction; 2D has none in this case.
 This detail follows the preselected five-case/prostate-first illustration rule.
 Orange marks zero-overlap components; cyan components can still contain FP.
+Only the component figure's legend/footer spacing was adjusted locally;
+its server-rendered image panels and annotations are unchanged pixel for pixel.
 
 ![Example 2, paired 3D component detail on original epoch-8 validation predictions](figures/failure-example-02-components-epoch8.png)
 
@@ -471,7 +473,7 @@ Additional three-fold cross-validation leaves out the five test patients: 33 dev
 
 Earlier speed and memory test (epoch 4, same A100): median forward time 2D: 13.36 ms; 3D: 49.96 ms; allocated memory peak 2D: 445.89 MiB; 3D: 565.98 MiB. Prepared volume dimensions (depth, height, width): 64 x 128 x 128 voxels. Both meet the speed and memory targets. Times exclude data preparation, transfer and output processing. These measurements are not for the epoch-12 cross-validation models or memory used during training. Five pictured epoch-8 CPU validation cases show missed end regions, missed parts of the bladder and extra areas labelled as prostate; they are not from epoch-12 cross-validation or the test set.
 
-**Limits, next steps and backup plan.** Limits include five test patients, one seed, repeated scans, shared training patients across folds, model differences, downsampling and small CPU/CUDA differences. The augmented three-fold comparison is complete (table above). The eight jobs for folds 2 and 3 finished on 23 October; results and server records were collected and verified on 24 October. They used 2 h 52 min 05 s in total, within the 240-minute cap, with every job under 30 minutes. The original test was not rerun. The component check completed on 24 October in 2 min 23 s on four CPU cores, with no GPU use. The report and reproduction review are complete. Next, submit the upstream pull request and upload the full README report PDF to Turnitin. I would keep 2D as the faster backup and 3D as the main model being studied. Better results in some regions do not mean 3D is always better.
+**Limits, next steps and backup plan.** Limits include five test patients, one seed, repeated scans, shared training patients across folds, model differences, downsampling and small CPU/CUDA differences. The augmented three-fold comparison is complete (table above). The eight jobs for folds 2 and 3 finished on 23 October; results and server records were collected and verified on 24 October. They used 2 h 52 min 05 s in total, within the 240-minute cap, with every job under 30 minutes. The original test was not rerun. The component check completed on 24 October in 2 min 23 s on four CPU cores, with no GPU use. The report and reproduction review are complete. [Upstream pull request #29](https://github.com/shakes76/PatternAnalysis-2026/pull/29) is open against `topic-recognition`. Upload the full README report PDF to Turnitin and respond to the teaching team's later PR review. I would keep 2D as the faster backup and 3D as the main model being studied. Better results in some regions do not mean 3D is always better.
 
 ## Code structure
 

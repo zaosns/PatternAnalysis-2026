@@ -303,8 +303,10 @@ scans on four CPU cores (2 min 23 s, no GPU). Its 38 confusion matrices matched
 the archived CPU predictions exactly; historical CPU/CUDA discrepancies remain.
 Only the five existing failure cases were eligible for figures. Across those
 cases, prostate again has priority over rectum, followed by largest component,
-ascending example number, 2D before 3D and component ID. The published PNG is an
-unchanged server output. The private records retain all five-class component
+ascending example number, 2D before 3D and component ID. The published component
+PNG preserves the server-rendered image panels and annotations pixel for pixel;
+only the legend/footer spacing was adjusted locally for readability. The private
+records retain the original PNG and all five-class component
 sizes, both connectivities, per-patient summaries and file/checkpoint hashes.
 
 ## Supplemental three-fold CV and reproducibility boundary
