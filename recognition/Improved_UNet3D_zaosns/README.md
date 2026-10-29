@@ -510,14 +510,13 @@ PR review within its announced response window; these are separate assessed item
 
 OpenAI Codex assisted with task interpretation, model/data/loss implementation,
 tests, GitHub setup, remote experiment scripts and execution, result aggregation,
-figures, feasibility material and report writing. Its role included substantive
-code and experimental assistance, not only editing prose. Checks included
+figures, feasibility material and report writing. This support included code
+development and experimental work. Checks included
 synthetic tests, small real-data execution/resume diagnostics, patient-separation
 and source/hash checks, independent recomputation of recorded metrics, and
 visual review of prediction panels. Failed runs and CPU/CUDA discrepancies were
 preserved. These checks do not prove clinical validity or replace student review.
-The student remains responsible for understanding and defending the submitted
-code, decisions and claims.
+I have reviewed and verified all AI-assisted content, and I take full responsibility for the correctness of the submitted code and results.
 
 ## References
 
