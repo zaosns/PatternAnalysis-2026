@@ -385,14 +385,18 @@ any proposed correction on development data before claiming improvement.
 
 ## Engineering recommendation and limitations
 
-Use **2D as the practical efficiency baseline** for this research prototype:
-it leads the CV12 aggregates and costs less in the measured forward benchmark.
-Retain **3D Improved U-Net as the main investigation**, with its original-test
-terminal benefit reported alongside its inconsistent gains elsewhere. There
-is insufficient evidence to justify replacing 2D universally to gain 3D context.
+Use **2D as the lower-cost reference for further development**: it leads the
+CV12 aggregates and costs less in the measured forward benchmark. Keep
+**3D Improved U-Net as the main investigation**, focusing on end-region errors,
+since its original-test benefit is not consistent across splits and organs.
+Both models met the limits in the historical inference-time and memory test.
+On this evidence, the reason not to replace 2D with 3D is the inconsistent
+extra benefit, rather than a failure to fit the resource budget.
 
-Both models still need human correction for target-end omissions, bladder
-undercoverage and prostate overextension. These retrospective GT comparisons
+The evidence supports continued prototype work, but does not yet justify
+advancing either model to clinical use. Both models still need human correction
+for target-end omissions, bladder undercoverage and prostate overextension.
+These retrospective GT comparisons
 are not an automatic failure detector or validated clinical workflow. Clinical
 safety and correction time were not measured. Five test patients, one seed,
 architecture confounds and factor-2 resolution limit generalization. Native-grid
@@ -413,6 +417,8 @@ environment was Python **3.11.15**, PyTorch **2.13.0+cu130**, NumPy **2.4.6**,
 NiBabel **5.4.2**, CUDA **13.0**, cuDNN **9.20.0**, driver **590.48.01**.
 Prediction PNG metadata records Matplotlib **3.11.2**; local report figures used
 **3.10.0**. `python -s` excludes conflicting user-site packages.
+Connected-component diagnostics and their tests require SciPy **1.17.1**
+(the recorded server version); model training does not require SciPy.
 [Detailed setup and commands](docs/reproduction.md) cover
 data preparation, both training entries, checkpoint restoration, prediction,
 frozen evaluation and the benchmark.
