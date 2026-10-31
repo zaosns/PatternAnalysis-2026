@@ -108,16 +108,21 @@ whole-volume normalization and 3D downsampling mix information during preparatio
 Padded convolutions and affine instance normalization adapt the original U-Net;
 this baseline is also not an exact reproduction of its reference paper.
 
+The 2D and 3D models are trained, run and evaluated separately. Their predictions
+are not combined. The multi-scale sum combines only the three segmentation heads
+within the 3D model.
+
 ```mermaid
 flowchart LR
     MRI["MRI volume"] --> P["Normalization + factor-2 grid"]
     P --> A["2D U-Net on each source-K plane"]
     P --> B["3D residual encoder"]
     B --> C["3D decoder + encoder skips"]
-    C --> D["Sum multiscale logits"]
-    A --> E["Six-class volume logits"]
-    D --> E
-    E --> F["Argmax labels + diagnostic overlays"]
+    C --> D["Sum multiscale logits within 3D"]
+    A --> E2["2D six-class volume logits"]
+    E2 --> F2["2D argmax labels + diagnostic overlays"]
+    D --> E3["3D six-class volume logits"]
+    E3 --> F3["3D argmax labels + diagnostic overlays"]
 ```
 
 Both models use channels **16/32/64/128**, batch size one volume, Adam at
@@ -323,8 +328,9 @@ Full-volume analysis additionally confirms one isolated 3D prostate FP voxel at
 `d=48`, separate from the GT-overlapping prediction; 2D has none in this case.
 This detail follows the preselected five-case/prostate-first illustration rule.
 Orange marks zero-overlap components; cyan components can still contain FP.
-Only the component figure's legend/footer spacing was adjusted locally;
-its server-rendered image panels and annotations are unchanged pixel for pixel.
+The component figure's title/footer wording and legend spacing were adjusted
+locally; its server-rendered image panels and in-panel annotations are unchanged
+pixel for pixel.
 
 ![Example 2, paired 3D component detail on original epoch-8 validation predictions](figures/failure-example-02-components-epoch8.png)
 

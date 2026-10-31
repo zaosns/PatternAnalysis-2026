@@ -304,8 +304,8 @@ the archived CPU predictions exactly; historical CPU/CUDA discrepancies remain.
 Only the five existing failure cases were eligible for figures. Across those
 cases, prostate again has priority over rectum, followed by largest component,
 ascending example number, 2D before 3D and component ID. The published component
-PNG preserves the server-rendered image panels and annotations pixel for pixel;
-only the legend/footer spacing was adjusted locally for readability. The private
+PNG preserves the server-rendered image panels and in-panel annotations pixel for
+pixel; title/footer wording and legend spacing were adjusted locally. The private
 records retain the original PNG and all five-class component
 sizes, both connectivities, per-patient summaries and file/checkpoint hashes.
 

@@ -145,16 +145,27 @@ def render_component_panels(prepared, prediction_2d, prediction_3d, components_2
                 ax.set_ylabel(f'Source-K plane d={d}', fontsize=9)
             ax.set_xticks([])
             ax.set_yticks([])
+    voxel_word = 'voxel' if component['voxel_count'] == 1 else 'voxels'
+    first_depth = component['bbox_dhw']['start'][0]
+    last_depth = component['bbox_dhw']['stop'][0] - 1
+    depth_text = (f'depth {first_depth}' if first_depth == last_depth
+                  else f'depths {first_depth}–{last_depth}')
     fig.suptitle(f'{case_label}: disconnected {organ.lower()} prediction | original epoch-8 CPU validation\n'
-                 f'Highlighted {selection["model"].upper()} component: {component["voxel_count"]} voxels, '
-                 f'no same-class GT overlap, depths {component["bbox_dhw"]["start"][0]}–'
-                 f'{component["bbox_dhw"]["stop"][0]-1}', fontsize=12, y=.985)
+                 f'Highlighted {selection["model"].upper()} component: {component["voxel_count"]} {voxel_word}, '
+                 f'no same-class GT overlap, {depth_text}', fontsize=12, y=.985)
     fig.legend(handles=[Patch(color='#80d98a', label='Ground truth'),
                         Patch(color='#1bb6bf', label='Prediction component with some GT overlap'),
                         Patch(color='#f07840', label='Prediction component with zero GT overlap')],
                loc='lower center', bbox_to_anchor=(.5, .075), ncol=3, fontsize=8)
-    count_text = ' | '.join(f'{m.upper()}: {v["zero_overlap_prediction_component_count"]} zero-overlap components, '
-                            f'{v["zero_overlap_prediction_voxels"]} voxels' for m, v in volume_counts.items())
+    count_parts = []
+    for model, counts in volume_counts.items():
+        n_components = counts['zero_overlap_prediction_component_count']
+        n_voxels = counts['zero_overlap_prediction_voxels']
+        component_word = 'component' if n_components == 1 else 'components'
+        voxel_word = 'voxel' if n_voxels == 1 else 'voxels'
+        count_parts.append(f'{model.upper()}: {n_components} zero-overlap {component_word}, '
+                           f'{n_voxels} {voxel_word}')
+    count_text = ' | '.join(count_parts)
     fig.text(.5, .026, count_text + '\nCounts use full 3D volumes and 26-neighbour connectivity; predictions unchanged.'
              '\nCyan components can include false-positive voxels.',
              ha='center', fontsize=8)
